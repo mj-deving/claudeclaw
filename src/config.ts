@@ -14,7 +14,6 @@ function optional(name: string, fallback: string): string {
 
 export const config = {
   botToken: required("BOT_TOKEN"),
-  anthropicApiKey: required("ANTHROPIC_API_KEY"),
   allowedChatIds: new Set(
     required("ALLOWED_CHAT_IDS")
       .split(",")

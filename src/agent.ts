@@ -35,6 +35,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
       options: {
         permissionMode: "bypassPermissions" as const,
         allowDangerouslySkipPermissions: true,
+        settingSources: ["user", "project"],
         maxTurns: opts.maxTurns ?? config.agentMaxTurns,
         cwd: opts.cwd ?? config.agentCwd,
         abortController: controller,
