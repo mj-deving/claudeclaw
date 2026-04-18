@@ -1,10 +1,12 @@
-/** Grammy bot setup with allowlist, typing indicator, message splitting, cost footer. */
+/** Grammy bot setup with allowlist, PIN lock, exfiltration guard, typing indicator, message splitting, cost footer. */
 
 import { Bot, type Context, GrammyError } from "grammy";
 import { config } from "./config.ts";
 import { getSession, upsertSession } from "./db.ts";
 import { enqueue } from "./queue.ts";
 import { runAgentWithRetry, type AgentResult } from "./agent.ts";
+import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
+import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const DEFAULT_AGENT_ID = "main";
@@ -30,6 +32,46 @@ export function createBot(): Bot {
     }
     await next();
   });
+
+  // PIN lock middleware — runs after allowlist, handles /unlock and /lock,
+  // blocks all other messages when locked
+  if (isPinEnabled()) {
+    bot.on("message:text", async (ctx, next) => {
+      const chatId = ctx.chat.id;
+      const text = ctx.message.text.trim();
+
+      // /unlock <pin> — always allowed, even when locked
+      if (text.startsWith("/unlock ")) {
+        const pin = text.slice("/unlock ".length).trim();
+        const result = tryUnlock(chatId, pin);
+        if (result.success) {
+          await ctx.reply("\u{1F513} Unlocked. Session is active.");
+        } else if (result.lockedOut) {
+          await ctx.reply("\u{1F6AB} Too many failed attempts. Try again later.");
+        } else {
+          await ctx.reply("\u{274C} Invalid PIN.");
+        }
+        return;
+      }
+
+      // /lock — manual lock (only meaningful when unlocked)
+      if (text === "/lock") {
+        lock(chatId);
+        await ctx.reply("\u{1F512} Session locked. Use /unlock <pin> to resume.");
+        return;
+      }
+
+      // Block all other messages when locked
+      if (isLocked(chatId)) {
+        await ctx.reply("\u{1F512} Session is locked. Use /unlock <pin> to unlock.");
+        return;
+      }
+
+      // Unlocked — reset idle timer and continue
+      touchActivity(chatId);
+      await next();
+    });
+  }
 
   // Handle text messages
   bot.on("message:text", async (ctx) => {
@@ -79,6 +121,14 @@ async function handleMessage(
     const responseText = result.text ?? "(No response from Claude)";
     const footer = formatCostFooter(result);
     const fullResponse = `${responseText}\n\n${footer}`;
+
+    // Exfiltration guard — scan for leaked secrets before sending
+    const scan = scanForSecrets(fullResponse);
+    if (!scan.clean) {
+      console.warn(`[exfiltration] Blocked response for chat ${chatId}: ${scan.matches.join(", ")}`);
+      await ctx.reply(formatRedactionWarning(scan.matches));
+      return;
+    }
 
     // Split and send
     await sendSplitMessages(ctx, fullResponse);

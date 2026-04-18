@@ -28,4 +28,16 @@ export const config = {
   agentMaxTurns: Number(optional("AGENT_MAX_TURNS", "30")),
   agentTimeoutMs: Number(optional("AGENT_TIMEOUT_MS", "900000")),
   agentCwd: optional("AGENT_CWD", process.env.HOME ?? "/home"),
+
+  // Security — PIN lock (optional: omit PIN_HASH to disable locking)
+  pinHash: process.env.PIN_HASH ?? "",
+  pinSalt: (() => {
+    const hash = process.env.PIN_HASH ?? "";
+    const salt = process.env.PIN_SALT ?? "";
+    if (hash && !salt) {
+      throw new Error("PIN_SALT is required when PIN_HASH is set. Generate both with: bun run scripts/hash-pin.ts <pin>");
+    }
+    return salt;
+  })(),
+  idleLockMs: Number(optional("IDLE_LOCK_MINUTES", "30")) * 60_000,
 } as const;

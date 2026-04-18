@@ -1,0 +1,31 @@
+# ClaudeClaw systemd user service
+# Install: deploy.sh copies this to ~/.config/systemd/user/ and templates paths
+# Do not use %h directly — deploy.sh replaces __HOME__ and __PROJECT__ at install time
+
+[Unit]
+Description=ClaudeClaw Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT__
+EnvironmentFile=__PROJECT__/.env
+ExecStart=__BUN__ run src/index.ts
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateNetwork=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__PROJECT__ __HOME__/.claudeclaw
+MemoryDenyWriteExecute=false
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=default.target
