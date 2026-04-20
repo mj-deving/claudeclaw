@@ -21,9 +21,17 @@ export function initDb(): void {
       session_id TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      active_project TEXT,
       PRIMARY KEY (chat_id, agent_id)
     );
   `);
+
+  // Migrate existing DBs — idempotent (SQLite errors if column already exists)
+  try {
+    db.exec("ALTER TABLE sessions ADD COLUMN active_project TEXT");
+  } catch {
+    // Column already exists — expected on subsequent runs
+  }
 }
 
 export function getSession(
@@ -51,6 +59,37 @@ export function upsertSession(
        updated_at = datetime('now')`,
     [chatId, agentId, sessionId],
   );
+}
+
+export function getActiveProject(chatId: number): string | undefined {
+  const row = db
+    .query<{ active_project: string | null }, [number]>(
+      "SELECT active_project FROM sessions WHERE chat_id = ? AND active_project IS NOT NULL LIMIT 1",
+    )
+    .get(chatId);
+  return row?.active_project ?? undefined;
+}
+
+export function setActiveProject(chatId: number, projectPath: string): void {
+  // Upsert: if a session row exists for this chat, update it; otherwise insert a placeholder
+  const existing = db
+    .query<{ chat_id: number }, [number]>(
+      "SELECT chat_id FROM sessions WHERE chat_id = ? LIMIT 1",
+    )
+    .get(chatId);
+
+  if (existing) {
+    db.run(
+      "UPDATE sessions SET active_project = ?, updated_at = datetime('now') WHERE chat_id = ?",
+      [projectPath, chatId],
+    );
+  } else {
+    db.run(
+      `INSERT INTO sessions (chat_id, agent_id, session_id, active_project)
+       VALUES (?, 'main', '', ?)`,
+      [chatId, projectPath],
+    );
+  }
 }
 
 export function closeDb(): void {
