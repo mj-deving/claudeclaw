@@ -104,3 +104,17 @@ export function triageDiscard(n: number): string {
     return `Failed to discard: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
+
+/** Execute view via mx CLI — runs ExtractWisdom (Opus), longer timeout. */
+export function triageView(n: number): string {
+  try {
+    const { execSync } = require("child_process");
+    const out = execSync(`bun ${join(HOME, ".claude/tools/mx.ts")} view ${n}`, {
+      encoding: "utf-8",
+      timeout: 120000,  // 2 min — Opus wisdom extraction takes time
+    }).trim();
+    return out || `No content for item ${n}`;
+  } catch (err) {
+    return `Failed to view: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}

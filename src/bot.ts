@@ -7,7 +7,7 @@ import { enqueue } from "./queue.ts";
 import { runAgentWithRetry, type AgentResult } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
-import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard } from "./capture-handler.ts";
+import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard, triageView } from "./capture-handler.ts";
 import { transcribeVoice } from "./voice.ts";
 import { searchMemories, getRecentMemories, clearMemories } from "./memory.ts";
 import { embedText, extractAndStore } from "./extraction.ts";
@@ -182,6 +182,17 @@ export function createBot(): Bot {
     if (text.startsWith("/discard ")) {
       const n = Number(text.slice(9).trim());
       if (n) { await ctx.reply(triageDiscard(n)); } else { await ctx.reply("Usage: /discard <n>"); }
+      return;
+    }
+    if (text.startsWith("/view ")) {
+      const n = Number(text.slice(6).trim());
+      if (n) {
+        await ctx.replyWithChatAction("typing").catch(() => {});
+        const result = triageView(n);
+        await sendSplitMessages(ctx, result);
+      } else {
+        await ctx.reply("Usage: /view <n>");
+      }
       return;
     }
 
