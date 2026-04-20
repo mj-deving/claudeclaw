@@ -18,15 +18,10 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Security hardening
+# Security — allowlist is the boundary, not filesystem sandbox
 NoNewPrivileges=true
 PrivateNetwork=false
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=__PROJECT__ __HOME__/.claudeclaw __HOME__/.claude /tmp
 MemoryDenyWriteExecute=false
-ProtectKernelTunables=true
-ProtectControlGroups=true
 
 [Install]
 WantedBy=default.target
