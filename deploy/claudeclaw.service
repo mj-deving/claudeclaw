@@ -11,6 +11,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=__PROJECT__
 EnvironmentFile=__PROJECT__/.env
+Environment=PATH=__HOME__/.npm-global/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=__BUN__ run src/index.ts
 Restart=on-failure
 RestartSec=5
