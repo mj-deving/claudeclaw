@@ -7,7 +7,7 @@ import { enqueue } from "./queue.ts";
 import { runAgentWithRetry, type AgentResult } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
-import { capture, type CaptureType } from "./capture-handler.ts";
+import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard } from "./capture-handler.ts";
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const DEFAULT_AGENT_ID = "main";
@@ -109,6 +109,22 @@ export function createBot(): Bot {
       } else {
         await ctx.reply(`\u2717 Capture failed: ${result.error}`);
       }
+      return;
+    }
+
+    // Triage commands — read/act on REVIEW.md ($0, <1s)
+    if (text === "/review") {
+      await ctx.reply(getReviewSummary());
+      return;
+    }
+    if (text.startsWith("/approve ")) {
+      const n = Number(text.slice(9).trim());
+      if (n) { await ctx.reply(triageApprove(n)); } else { await ctx.reply("Usage: /approve <n>"); }
+      return;
+    }
+    if (text.startsWith("/discard ")) {
+      const n = Number(text.slice(9).trim());
+      if (n) { await ctx.reply(triageDiscard(n)); } else { await ctx.reply("Usage: /discard <n>"); }
       return;
     }
 
