@@ -30,6 +30,9 @@ export const config = {
   agentTimeoutMs: Number(optional("AGENT_TIMEOUT_MS", "900000")),
   agentCwd: optional("AGENT_CWD", process.env.HOME ?? "/home"),
 
+  // Gemini — embeddings + fact extraction
+  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+
   // Groq Whisper STT
   groqApiKey: process.env.GROQ_API_KEY ?? "",
 
