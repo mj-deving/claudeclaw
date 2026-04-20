@@ -1,4 +1,4 @@
-/** SDK bridge — runAgent and runAgentWithRetry wrappers around query(). */
+/** SDK bridge — runAgent with streaming text chunks + model selection. */
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { config } from "./config.ts";
@@ -9,6 +9,7 @@ export interface AgentOptions {
   agentId?: string;
   cwd?: string;
   maxTurns?: number;
+  onText?: (chunk: string) => void;
 }
 
 export interface AgentResult {
@@ -33,6 +34,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
     for await (const message of query({
       prompt: opts.message,
       options: {
+        model: config.agentModel,
         permissionMode: "bypassPermissions" as const,
         allowDangerouslySkipPermissions: true,
         settingSources: ["user", "project"],
@@ -44,6 +46,18 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
     })) {
       if (message.type === "system" && message.subtype === "init") {
         sessionId = message.session_id;
+      }
+
+      // Stream assistant text to callback
+      if (message.type === "assistant" && opts.onText) {
+        const content = (message as any).message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block && typeof block === "object" && "text" in block && typeof block.text === "string") {
+              opts.onText(block.text);
+            }
+          }
+        }
       }
 
       if (message.type === "result") {
@@ -90,7 +104,6 @@ export async function runAgentWithRetry(
       }
 
       if (attempt < maxRetries) {
-        // Exponential backoff: 1s, 2s
         const delay = 1000 * Math.pow(2, attempt);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
