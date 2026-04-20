@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "claudeclaw",
+  "project_id": "6b256766-0511-4cb0-9adf-6554fc10e525"
+}

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Git pre-commit hook: scans staged files for secrets before commit.
+# Install globally: git config --global core.hooksPath ~/.claude/hooks/git-hooks
+# Or per-repo: cp this to .git/hooks/pre-commit
+
+set -e
+
+# Secret patterns (grep -E extended regex)
+PATTERNS=(
+  'AIza[A-Za-z0-9_-]{35}'
+  'sk-ant-[A-Za-z0-9_-]{20,}'
+  'sk-or-v1-[a-f0-9]{64}'
+  'sk-[A-Za-z0-9]{20,}'
+  'xai-[A-Za-z0-9_-]{20,}'
+  'AKIA[A-Z0-9]{16}'
+  'cfut_[A-Za-z0-9_-]{30,}'
+  'ghp_[A-Za-z0-9]{36}'
+  'gho_[A-Za-z0-9]{36}'
+  'ghs_[A-Za-z0-9]{36}'
+  'ghr_[A-Za-z0-9]{36}'
+  'github_pat_[A-Za-z0-9_]{22,}'
+  'npm_[A-Za-z0-9]{36}'
+  'glpat-[A-Za-z0-9_-]{20,}'
+  'sk_live_[A-Za-z0-9]{24,}'
+  'hf_[A-Za-z0-9]{34,}'
+  'xoxb-[0-9]{10,}'
+  'xoxp-[0-9]{10,}'
+  '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
+  '-----BEGIN PGP PRIVATE KEY BLOCK-----'
+  '-----BEGIN ENCRYPTED PRIVATE KEY-----'
+  '(mongodb\+srv|mongodb|postgres(ql)?|mysql|redis)://[^:]+:[^@]+@'
+)
+
+# Build combined pattern
+COMBINED=$(IFS='|'; echo "${PATTERNS[*]}")
+
+# Get staged file content (only added/modified, skip deleted and binary)
+VIOLATIONS=""
+while IFS= read -r file; do
+  # Skip binary files and common non-code files
+  case "$file" in
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.woff|*.woff2|*.ttf|*.eot|*.lock|*.lockb) continue ;;
+  esac
+  # Skip files that legitimately contain secret patterns (references/examples)
+  case "$file" in
+    *SecurityValidator.hook.ts|*SecretAudit.md|*secret-patterns*|*git-secret-scan.sh|*pre-commit) continue ;;
+  esac
+
+  # Check staged content (not working tree) for secrets
+  MATCHES=$(git show ":$file" 2>/dev/null | grep -nE "$COMBINED" 2>/dev/null || true)
+  if [ -n "$MATCHES" ]; then
+    VIOLATIONS="${VIOLATIONS}\n🚨 $file:\n$MATCHES\n"
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
+
+if [ -n "$VIOLATIONS" ]; then
+  echo ""
+  echo "═══════════════════════════════════════════════════════"
+  echo "🚨 SECRET LEAK PREVENTED — commit blocked"
+  echo "═══════════════════════════════════════════════════════"
+  echo ""
+  echo -e "$VIOLATIONS"
+  echo "Fix: remove secrets and use environment variables or"
+  echo "     secret managers (wrangler secret put, gh secret set)"
+  echo ""
+  echo "To bypass (DANGEROUS): git commit --no-verify"
+  echo "═══════════════════════════════════════════════════════"
+  exit 1
+fi
+
+# --- BEGIN BEADS INTEGRATION v0.63.3 ---
+# This section is managed by beads. Do not remove these markers.
+if command -v bd >/dev/null 2>&1; then
+  export BD_GIT_HOOK=1
+  _bd_timeout=${BEADS_HOOK_TIMEOUT:-300}
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$_bd_timeout" bd hooks run pre-commit "$@"
+    _bd_exit=$?
+    if [ $_bd_exit -eq 124 ]; then
+      echo >&2 "beads: hook 'pre-commit' timed out after ${_bd_timeout}s — continuing without beads"
+      _bd_exit=0
+    fi
+  else
+    bd hooks run pre-commit "$@"
+    _bd_exit=$?
+  fi
+  if [ $_bd_exit -eq 3 ]; then
+    echo >&2 "beads: database not initialized — skipping hook 'pre-commit'"
+    _bd_exit=0
+  fi
+  if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
+fi
+# --- END BEADS INTEGRATION v0.63.3 ---
