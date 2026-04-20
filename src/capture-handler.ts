@@ -3,9 +3,9 @@
 import { appendFileSync, existsSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
 
-const IDEAS_FILE = join(
+const INBOX_FILE = join(
   process.env.HOME ?? "/home/mj",
-  ".claude/PAI/USER/TELOS/IDEAS.md",
+  ".claude/PAI/USER/TELOS/INBOX.md",
 );
 
 function today(): string {
@@ -28,7 +28,7 @@ export interface CaptureResult {
 
 export function capture(type: CaptureType, payload: string): CaptureResult {
   try {
-    const dir = dirname(IDEAS_FILE);
+    const dir = dirname(INBOX_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     let line: string;
@@ -47,7 +47,7 @@ export function capture(type: CaptureType, payload: string): CaptureResult {
       line = `- [${today()}] ${tag}${payload}`;
     }
 
-    appendFileSync(IDEAS_FILE, line + "\n");
+    appendFileSync(INBOX_FILE, line + "\n");
     return { success: true, line };
   } catch (err) {
     return {
