@@ -25,9 +25,13 @@ export const config = {
         return parsed;
       }),
   ),
+  agentModel: optional("AGENT_MODEL", "claude-sonnet-4-6"),
   agentMaxTurns: Number(optional("AGENT_MAX_TURNS", "30")),
   agentTimeoutMs: Number(optional("AGENT_TIMEOUT_MS", "900000")),
   agentCwd: optional("AGENT_CWD", process.env.HOME ?? "/home"),
+
+  // Groq Whisper STT
+  groqApiKey: process.env.GROQ_API_KEY ?? "",
 
   // Security — PIN lock (optional: omit PIN_HASH to disable locking)
   pinHash: process.env.PIN_HASH ?? "",

@@ -1,6 +1,6 @@
-/** Grammy bot setup with allowlist, PIN lock, exfiltration guard, typing indicator, message splitting, cost footer. */
+/** Grammy bot — allowlist, PIN lock, exfiltration guard, streaming responses, voice transcription. */
 
-import { Bot, type Context, GrammyError } from "grammy";
+import { Bot, type Context } from "grammy";
 import { config } from "./config.ts";
 import { getSession, upsertSession } from "./db.ts";
 import { enqueue } from "./queue.ts";
@@ -8,11 +8,14 @@ import { runAgentWithRetry, type AgentResult } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard } from "./capture-handler.ts";
+import { transcribeVoice } from "./voice.ts";
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const DEFAULT_AGENT_ID = "main";
+const STREAM_DEBOUNCE_MS = 800;
+const STREAM_MIN_CHARS = 100;
 
-/** Detect capture commands — returns parsed command or null (→ agent path). */
+/** Detect explicit capture commands — returns parsed command or null (→ agent path). */
 function isCaptureCommand(
   text: string,
 ): { type: CaptureType; payload: string } | null {
@@ -55,14 +58,12 @@ export function createBot(): Bot {
     await next();
   });
 
-  // PIN lock middleware — runs after allowlist, handles /unlock and /lock,
-  // blocks all other messages when locked
+  // PIN lock middleware
   if (isPinEnabled()) {
     bot.on("message:text", async (ctx, next) => {
       const chatId = ctx.chat.id;
       const text = ctx.message.text.trim();
 
-      // /unlock <pin> — always allowed, even when locked
       if (text.startsWith("/unlock ")) {
         const pin = text.slice("/unlock ".length).trim();
         const result = tryUnlock(chatId, pin);
@@ -76,20 +77,17 @@ export function createBot(): Bot {
         return;
       }
 
-      // /lock — manual lock (only meaningful when unlocked)
       if (text === "/lock") {
         lock(chatId);
         await ctx.reply("\u{1F512} Session locked. Use /unlock <pin> to resume.");
         return;
       }
 
-      // Block all other messages when locked
       if (isLocked(chatId)) {
         await ctx.reply("\u{1F512} Session is locked. Use /unlock <pin> to unlock.");
         return;
       }
 
-      // Unlocked — reset idle timer and continue
       touchActivity(chatId);
       await next();
     });
@@ -100,7 +98,7 @@ export function createBot(): Bot {
     const chatId = ctx.chat.id;
     const text = ctx.message.text;
 
-    // Fast path: capture commands bypass agent entirely ($0, <1s)
+    // Fast path: explicit capture commands ($0, <1s)
     const cmd = isCaptureCommand(text);
     if (cmd) {
       const result = capture(cmd.type, cmd.payload);
@@ -112,7 +110,7 @@ export function createBot(): Bot {
       return;
     }
 
-    // Triage commands — read/act on REVIEW.md ($0, <1s)
+    // Triage commands ($0, <1s)
     if (text === "/review") {
       await ctx.reply(getReviewSummary());
       return;
@@ -128,22 +126,40 @@ export function createBot(): Bot {
       return;
     }
 
-    // Agent path (existing)
+    // Agent path — PAI-aware, streaming
     enqueue(chatId, async () => {
-      await handleMessage(ctx, chatId, text);
+      await handleMessageStreaming(ctx, chatId, text);
     });
   });
 
+  // Handle voice messages — transcribe then route to agent
+  bot.on("message:voice", async (ctx) => {
+    const chatId = ctx.chat.id;
+
+    // PIN lock check for voice
+    if (isPinEnabled() && isLocked(chatId)) {
+      await ctx.reply("\u{1F512} Session is locked. Use /unlock <pin> to unlock.");
+      return;
+    }
+    if (isPinEnabled()) touchActivity(chatId);
+
+    enqueue(chatId, async () => {
+      await handleVoiceMessage(ctx, chatId);
+    });
+  });
+
+  // Reject other message types
   bot.on("message", async (ctx) => {
-    if (!ctx.message.text) {
-      await ctx.reply("I can only process text messages.");
+    if (!ctx.message.text && !ctx.message.voice) {
+      await ctx.reply("I can handle text and voice messages.");
     }
   });
 
   return bot;
 }
 
-async function handleMessage(
+/** Handle text messages with streaming response to Telegram. */
+async function handleMessageStreaming(
   ctx: Context,
   chatId: number,
   text: string,
@@ -153,44 +169,135 @@ async function handleMessage(
   }, 4000);
   await ctx.replyWithChatAction("typing").catch(() => {});
 
+  let streamedMessageId: number | null = null;
+  let buffer = "";
+  let lastFlush = 0;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function flushBuffer() {
+    if (!buffer) return;
+    const text = buffer;
+
+    // Exfiltration guard on streamed content
+    const scan = scanForSecrets(text);
+    if (!scan.clean) {
+      console.warn(`[exfiltration] Blocked streamed content for chat ${chatId}`);
+      buffer = "[Content redacted — contained sensitive data]";
+    }
+
+    try {
+      if (streamedMessageId) {
+        // Edit existing message with accumulated text
+        const truncated = text.length > TELEGRAM_MAX_LENGTH
+          ? text.slice(0, TELEGRAM_MAX_LENGTH - 20) + "\n\n[truncated]"
+          : text;
+        await ctx.api.editMessageText(chatId, streamedMessageId, truncated).catch(() => {});
+      } else {
+        // Send first message
+        const truncated = text.length > TELEGRAM_MAX_LENGTH
+          ? text.slice(0, TELEGRAM_MAX_LENGTH - 20) + "\n\n[truncated]"
+          : text;
+        const sent = await ctx.reply(truncated);
+        streamedMessageId = sent.message_id;
+      }
+    } catch {
+      // Edit can fail if message hasn't changed — ignore
+    }
+    lastFlush = Date.now();
+  }
+
+  function scheduleFlush() {
+    if (flushTimer) clearTimeout(flushTimer);
+    const elapsed = Date.now() - lastFlush;
+    const delay = Math.max(0, STREAM_DEBOUNCE_MS - elapsed);
+    flushTimer = setTimeout(() => flushBuffer(), delay);
+  }
+
   try {
-    // Look up existing session for resumption
     const existingSessionId = getSession(chatId, DEFAULT_AGENT_ID);
 
     const result = await runAgentWithRetry({
       message: text,
       sessionId: existingSessionId,
       agentId: DEFAULT_AGENT_ID,
+      onText: (chunk) => {
+        buffer += chunk;
+        // Only start streaming after minimum chars accumulated
+        if (buffer.length >= STREAM_MIN_CHARS) {
+          scheduleFlush();
+        }
+      },
     });
 
-    // Persist the session ID for future resumption
+    // Final flush with cost footer
+    if (flushTimer) clearTimeout(flushTimer);
+
     if (result.sessionId) {
       upsertSession(chatId, DEFAULT_AGENT_ID, result.sessionId);
     }
 
-    // Format response with cost footer
-    const responseText = result.text ?? "(No response from Claude)";
+    const responseText = buffer || result.text || "(No response)";
     const footer = formatCostFooter(result);
     const fullResponse = `${responseText}\n\n${footer}`;
 
-    // Exfiltration guard — scan for leaked secrets before sending
+    // Final exfiltration check
     const scan = scanForSecrets(fullResponse);
     if (!scan.clean) {
-      console.warn(`[exfiltration] Blocked response for chat ${chatId}: ${scan.matches.join(", ")}`);
+      console.warn(`[exfiltration] Blocked final response for chat ${chatId}`);
       await ctx.reply(formatRedactionWarning(scan.matches));
       return;
     }
 
-    // Split and send
-    await sendSplitMessages(ctx, fullResponse);
+    // Send/edit final message
+    if (streamedMessageId) {
+      const truncated = fullResponse.length > TELEGRAM_MAX_LENGTH
+        ? fullResponse.slice(0, TELEGRAM_MAX_LENGTH - 20) + "\n\n[truncated]"
+        : fullResponse;
+      await ctx.api.editMessageText(chatId, streamedMessageId, truncated).catch(() => {});
+    } else {
+      await sendSplitMessages(ctx, fullResponse);
+    }
   } catch (err) {
     console.error(`[bot] Failed to process message for chat ${chatId}:`, err);
-    await ctx.reply(
-      "Failed to get a response. Please try again.",
-    ).catch(() => {});
+    if (flushTimer) clearTimeout(flushTimer);
+    await ctx.reply("Failed to get a response. Please try again.").catch(() => {});
   } finally {
     clearInterval(typingInterval);
   }
+}
+
+/** Handle voice messages — transcribe via Groq Whisper, then route to agent. */
+async function handleVoiceMessage(
+  ctx: Context,
+  chatId: number,
+): Promise<void> {
+  const voice = ctx.message?.voice;
+  if (!voice) return;
+
+  await ctx.replyWithChatAction("typing").catch(() => {});
+
+  // Get file URL from Telegram
+  const file = await ctx.api.getFile(voice.file_id);
+  const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+
+  // Transcribe
+  const duration = voice.duration;
+  await ctx.reply(`\u{1F399}\uFE0F Transcribing ${duration}s voice note...`);
+
+  const transcription = await transcribeVoice(fileUrl);
+  if (!transcription.success) {
+    await ctx.reply(`\u2717 Transcription failed: ${transcription.error}`);
+    return;
+  }
+
+  // Show transcription
+  const preview = transcription.text.length > 200
+    ? transcription.text.slice(0, 200) + "..."
+    : transcription.text;
+  await ctx.reply(`\u{1F399}\uFE0F Transcribed:\n${preview}\n\nProcessing...`);
+
+  // Route transcribed text through the agent (PAI-aware)
+  await handleMessageStreaming(ctx, chatId, transcription.text);
 }
 
 function formatCostFooter(result: AgentResult): string {
@@ -198,14 +305,7 @@ function formatCostFooter(result: AgentResult): string {
   return `\u{1F4CA} In: ${result.inputTokens.toLocaleString()} | Out: ${result.outputTokens.toLocaleString()} | $${cost}`;
 }
 
-/**
- * Split a message into chunks that fit within Telegram's 4096 char limit.
- * Tries to split at newlines to avoid breaking markdown.
- */
-async function sendSplitMessages(
-  ctx: Context,
-  text: string,
-): Promise<void> {
+async function sendSplitMessages(ctx: Context, text: string): Promise<void> {
   const chunks = splitMessage(text);
   for (const chunk of chunks) {
     await ctx.reply(chunk);
@@ -213,33 +313,16 @@ async function sendSplitMessages(
 }
 
 function splitMessage(text: string): string[] {
-  if (text.length <= TELEGRAM_MAX_LENGTH) {
-    return [text];
-  }
-
+  if (text.length <= TELEGRAM_MAX_LENGTH) return [text];
   const chunks: string[] = [];
   let remaining = text;
-
   while (remaining.length > 0) {
-    if (remaining.length <= TELEGRAM_MAX_LENGTH) {
-      chunks.push(remaining);
-      break;
-    }
-
-    // Try to split at a newline before the limit
+    if (remaining.length <= TELEGRAM_MAX_LENGTH) { chunks.push(remaining); break; }
     let splitIndex = remaining.lastIndexOf("\n", TELEGRAM_MAX_LENGTH);
-    if (splitIndex <= 0) {
-      // No newline found, split at a space
-      splitIndex = remaining.lastIndexOf(" ", TELEGRAM_MAX_LENGTH);
-    }
-    if (splitIndex <= 0) {
-      // No space found, hard split
-      splitIndex = TELEGRAM_MAX_LENGTH;
-    }
-
+    if (splitIndex <= 0) splitIndex = remaining.lastIndexOf(" ", TELEGRAM_MAX_LENGTH);
+    if (splitIndex <= 0) splitIndex = TELEGRAM_MAX_LENGTH;
     chunks.push(remaining.slice(0, splitIndex));
     remaining = remaining.slice(splitIndex).replace(/^\n/, "");
   }
-
   return chunks;
 }
