@@ -27,7 +27,7 @@ export async function transcribeVoice(fileUrl: string): Promise<TranscriptionRes
 
     // Send to Groq Whisper
     const formData = new FormData();
-    formData.append("file", new Blob([audioBuffer], { type: "audio/ogg" }), "voice.oga");
+    formData.append("file", new Blob([audioBuffer], { type: "audio/ogg" }), "voice.ogg");
     formData.append("model", "whisper-large-v3-turbo");
     formData.append("response_format", "json");
 
