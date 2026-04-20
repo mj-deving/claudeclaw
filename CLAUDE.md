@@ -108,29 +108,34 @@ bd close <id>         # Complete work
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
 
-## Session Completion
+## Git Workflow — PR Only (CRITICAL)
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+**Never push directly to `main`.** All changes go through pull requests for audit trail and revertability.
 
-**MANDATORY WORKFLOW:**
+**Branch naming:** `<type>/<short-description>` — e.g. `feat/voice-v2`, `fix/daemon-node22`, `chore/update-readme`
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+**MANDATORY SESSION CLOSE:**
+
+1. **File issues for remaining work** — `bd create` for anything that needs follow-up
+2. **Run quality gates** (if code changed) — tests, linters, `bun run typecheck`
+3. **Update issue status** — close finished work, update in-progress items
+4. **Create PR and push:**
    ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
+   git checkout -b <type>/<description>   # if not already on a branch
+   git add <files>
+   git commit -m "<type>: <description>"
+   git push -u origin HEAD
+   gh pr create --fill                    # or --title/--body for more detail
+   bd dolt push                           # push beads state
    ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+5. **Merge if approved** — `gh pr merge --squash` (or leave for human review)
+6. **Clean up** — `git checkout main && git pull && git branch -d <branch>`
+7. **Verify** — `git status` shows clean, main is up to date
 
 **CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
+- NEVER push directly to main — always use a PR
+- Work is NOT complete until the PR is created and pushed
+- NEVER say "ready to push when you are" — YOU must create the PR
+- If the change is trivial (typo, config), you may create + merge in one step
+- Keep PRs focused — one logical change per PR
 <!-- END BEADS INTEGRATION -->
