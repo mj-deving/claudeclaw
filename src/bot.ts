@@ -2,7 +2,7 @@
 
 import { Bot, type Context } from "grammy";
 import { config } from "./config.ts";
-import { getSession, upsertSession } from "./db.ts";
+import { getSession, upsertSession, getActiveProject, setActiveProject } from "./db.ts";
 import { enqueue } from "./queue.ts";
 import { runAgentWithRetry, type AgentResult } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
@@ -10,10 +10,67 @@ import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts"
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard } from "./capture-handler.ts";
 import { transcribeVoice } from "./voice.ts";
 
+import { readdirSync, statSync } from "node:fs";
+import path from "node:path";
+
 const TELEGRAM_MAX_LENGTH = 4096;
 const DEFAULT_AGENT_ID = "main";
 const STREAM_DEBOUNCE_MS = 800;
 const STREAM_MIN_CHARS = 100;
+
+const PROJECTS_ROOT = path.join(process.env.HOME ?? "/home", "projects");
+
+/** Cached list of valid project directory names under ~/projects/. */
+let projectDirsCache: string[] | null = null;
+
+function getProjectDirs(): string[] {
+  if (projectDirsCache) return projectDirsCache;
+  try {
+    projectDirsCache = readdirSync(PROJECTS_ROOT).filter((name) => {
+      try {
+        return statSync(path.join(PROJECTS_ROOT, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    projectDirsCache = [];
+  }
+  return projectDirsCache;
+}
+
+/** Invalidate cache so new projects are picked up. Called on /project refresh. */
+function refreshProjectDirs(): string[] {
+  projectDirsCache = null;
+  return getProjectDirs();
+}
+
+/**
+ * Detect project intent from natural language.
+ * Matches: "move to X", "switch to X", "in X,", "in X and"
+ * Only returns a match if X is a valid project directory.
+ */
+function detectProjectIntent(text: string): string | null {
+  const dirs = getProjectDirs();
+  if (dirs.length === 0) return null;
+
+  // Patterns: "move to <project>", "switch to <project>", "in <project>,"
+  const patterns = [
+    /\b(?:move|switch|go)\s+to\s+([\w-]+)/i,
+    /\bin\s+([\w-]+)[,\s]+(?:and|work|fix|check|do|build|update|add|create|run)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const candidate = match[1]!.toLowerCase();
+      const found = dirs.find((d) => d.toLowerCase() === candidate);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
 
 /** Detect explicit capture commands — returns parsed command or null (→ agent path). */
 function isCaptureCommand(
@@ -126,6 +183,31 @@ export function createBot(): Bot {
       return;
     }
 
+    // Project commands
+    if (text === "/projects") {
+      const dirs = refreshProjectDirs();
+      const currentPath = getActiveProject(chatId);
+      const currentName = currentPath ? path.basename(currentPath) : null;
+      const list = dirs
+        .map((d) => (d === currentName ? `• **${d}** (active)` : `• ${d}`))
+        .join("\n");
+      await ctx.reply(list || "No projects found in ~/projects/");
+      return;
+    }
+    if (text.startsWith("/project ")) {
+      const name = text.slice("/project ".length).trim();
+      const dirs = getProjectDirs();
+      const found = dirs.find((d) => d.toLowerCase() === name.toLowerCase());
+      if (found) {
+        const projectPath = path.join(PROJECTS_ROOT, found);
+        setActiveProject(chatId, projectPath);
+        await ctx.reply(`Switched to ${found}\ncwd: ${projectPath}`);
+      } else {
+        await ctx.reply(`Unknown project: ${name}\nUse /projects to see available.`);
+      }
+      return;
+    }
+
     // Agent path — PAI-aware, streaming
     enqueue(chatId, async () => {
       await handleMessageStreaming(ctx, chatId, text);
@@ -214,12 +296,29 @@ async function handleMessageStreaming(
   }
 
   try {
+    // Project intent detection — NL triggers project switch before agent spawn
+    const detectedProject = detectProjectIntent(text);
+    if (detectedProject) {
+      const projectPath = path.join(PROJECTS_ROOT, detectedProject);
+      setActiveProject(chatId, projectPath);
+      // Notify user of implicit switch
+      if (streamedMessageId) {
+        await ctx.api.editMessageText(chatId, streamedMessageId, `→ ${detectedProject}`).catch(() => {});
+      } else {
+        const sent = await ctx.reply(`→ ${detectedProject}`);
+        streamedMessageId = sent.message_id;
+      }
+    }
+
+    // Resolve CWD: active project > env fallback
+    const activeCwd = getActiveProject(chatId) ?? config.agentCwd;
     const existingSessionId = getSession(chatId, DEFAULT_AGENT_ID);
 
     const result = await runAgentWithRetry({
       message: text,
       sessionId: existingSessionId,
       agentId: DEFAULT_AGENT_ID,
+      cwd: activeCwd,
       onText: (chunk) => {
         buffer += chunk;
         // Only start streaming after minimum chars accumulated
