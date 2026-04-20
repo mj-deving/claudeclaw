@@ -7,9 +7,31 @@ import { enqueue } from "./queue.ts";
 import { runAgentWithRetry, type AgentResult } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
+import { capture, type CaptureType } from "./capture-handler.ts";
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const DEFAULT_AGENT_ID = "main";
+
+/** Detect capture commands — returns parsed command or null (→ agent path). */
+function isCaptureCommand(
+  text: string,
+): { type: CaptureType; payload: string } | null {
+  if (text.startsWith("/add "))
+    return { type: "add", payload: text.slice(5).trim() };
+  if (text.startsWith("/url "))
+    return { type: "url", payload: text.slice(5).trim() };
+  if (text.startsWith("/memo "))
+    return { type: "memo", payload: text.slice(6).trim() };
+  if (text.startsWith("/remind "))
+    return { type: "remind", payload: text.slice(8).trim() };
+
+  // Auto-detect: bare URL with no surrounding text → capture as URL
+  const trimmed = text.trim();
+  if (/^https?:\/\/\S+$/.test(trimmed))
+    return { type: "url", payload: trimmed };
+
+  return null;
+}
 
 export function createBot(): Bot {
   const bot = new Bot(config.botToken);
@@ -73,11 +95,24 @@ export function createBot(): Bot {
     });
   }
 
-  // Handle text messages
+  // Handle text messages — fast path for capture, agent path for everything else
   bot.on("message:text", async (ctx) => {
     const chatId = ctx.chat.id;
     const text = ctx.message.text;
 
+    // Fast path: capture commands bypass agent entirely ($0, <1s)
+    const cmd = isCaptureCommand(text);
+    if (cmd) {
+      const result = capture(cmd.type, cmd.payload);
+      if (result.success) {
+        await ctx.reply(`\u2713 Captured: ${result.line}`);
+      } else {
+        await ctx.reply(`\u2717 Capture failed: ${result.error}`);
+      }
+      return;
+    }
+
+    // Agent path (existing)
     enqueue(chatId, async () => {
       await handleMessage(ctx, chatId, text);
     });
