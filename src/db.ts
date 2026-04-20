@@ -7,7 +7,7 @@ import { config } from "./config.ts";
 
 const DB_PATH = path.join(config.agentCwd, ".claudeclaw", "sessions.db");
 
-let db: Database;
+export let db: Database;
 
 export function initDb(): void {
   mkdirSync(path.dirname(DB_PATH), { recursive: true });

@@ -9,6 +9,8 @@ import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./securi
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard } from "./capture-handler.ts";
 import { transcribeVoice } from "./voice.ts";
+import { searchMemories, getRecentMemories, clearMemories } from "./memory.ts";
+import { embedText, extractAndStore } from "./extraction.ts";
 
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -208,6 +210,23 @@ export function createBot(): Bot {
       return;
     }
 
+    // Memory commands
+    if (text === "/memory") {
+      const memories = getRecentMemories(chatId);
+      if (memories.length === 0) {
+        await ctx.reply("No memories stored yet.");
+      } else {
+        const list = memories.map((m) => `• ${m.content}`).join("\n");
+        await ctx.reply(`Memories (${memories.length}):\n${list}`);
+      }
+      return;
+    }
+    if (text === "/forget") {
+      const count = clearMemories(chatId);
+      await ctx.reply(`Cleared ${count} memories.`);
+      return;
+    }
+
     // Agent path — PAI-aware, streaming
     enqueue(chatId, async () => {
       await handleMessageStreaming(ctx, chatId, text);
@@ -314,8 +333,20 @@ async function handleMessageStreaming(
     const activeCwd = getActiveProject(chatId) ?? config.agentCwd;
     const existingSessionId = getSession(chatId, DEFAULT_AGENT_ID);
 
+    // Memory search — embed query, find relevant context
+    let memoryContext = "";
+    const queryEmbedding = await embedText(text).catch(() => null);
+    if (queryEmbedding) {
+      const relevant = searchMemories(chatId, queryEmbedding);
+      if (relevant.length > 0) {
+        memoryContext = "[Memory context]\n" + relevant.map((m) => `- ${m.content}`).join("\n") + "\n\n";
+      }
+    }
+
+    const agentMessage = memoryContext + text;
+
     const result = await runAgentWithRetry({
-      message: text,
+      message: agentMessage,
       sessionId: existingSessionId,
       agentId: DEFAULT_AGENT_ID,
       cwd: activeCwd,
@@ -356,6 +387,9 @@ async function handleMessageStreaming(
     } else {
       await sendSplitMessages(ctx, fullResponse);
     }
+
+    // Fire-and-forget memory extraction — never blocks response delivery
+    extractAndStore(chatId, text, responseText);
   } catch (err) {
     console.error(`[bot] Failed to process message for chat ${chatId}:`, err);
     if (flushTimer) clearTimeout(flushTimer);

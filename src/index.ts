@@ -1,12 +1,14 @@
 /** Entry point — initialize DB, start bot, handle graceful shutdown. */
 
 import { initDb, closeDb } from "./db.ts";
+import { initMemoryDb } from "./memory.ts";
 import { createBot } from "./bot.ts";
 
 console.log("[claudeclaw] Starting...");
 
 // Initialize database
 initDb();
+initMemoryDb();
 console.log("[claudeclaw] Database initialized");
 
 // Create and start bot
