@@ -1,0 +1,26 @@
+# ClaudeClaw self-upgrade oneshot — pulls latest code, installs deps,
+# typechecks, then restarts the main claudeclaw.service.
+#
+# Triggered from inside the bot via:
+#   systemctl --user start claudeclaw-update.service
+# systemd owns this unit independently, so the restart it issues does not
+# kill the process that triggered it.
+#
+# Install: deploy.sh copies this to ~/.config/systemd/user/ and templates
+# __HOME__, __PROJECT__, __BUN__ at install time.
+
+[Unit]
+Description=ClaudeClaw Self-Upgrade (pull, install, typecheck, restart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT__
+Environment=PATH=__HOME__/.nvm/versions/node/v22.22.2/bin:__HOME__/.npm-global/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/git -C __PROJECT__ pull --ff-only
+ExecStart=__BUN__ install --frozen-lockfile --cwd __PROJECT__
+ExecStart=__BUN__ run --cwd __PROJECT__ typecheck
+ExecStart=/usr/bin/systemctl --user restart claudeclaw.service
+StandardOutput=journal
+StandardError=journal
