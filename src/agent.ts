@@ -2,6 +2,7 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { config } from "./config.ts";
+import { RUNTIME_PROMPT } from "./runtime-prompt.ts";
 
 export interface AgentOptions {
   message: string;
@@ -35,6 +36,11 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
       prompt: opts.message,
       options: {
         model: config.agentModel,
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: RUNTIME_PROMPT,
+        },
         permissionMode: "bypassPermissions" as const,
         allowDangerouslySkipPermissions: true,
         settingSources: ["user", "project"],
