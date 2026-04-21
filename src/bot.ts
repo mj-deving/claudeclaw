@@ -4,7 +4,7 @@ import { Bot, type Context } from "grammy";
 import { config } from "./config.ts";
 import { getSession, upsertSession, getActiveProject, setActiveProject } from "./db.ts";
 import { enqueue } from "./queue.ts";
-import { runAgentWithRetry, type AgentResult } from "./agent.ts";
+import { runAgentWithRetry } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard, triageView } from "./capture-handler.ts";
@@ -12,11 +12,12 @@ import { handleVoiceMessage } from "./voice.ts";
 import { handlePhotoMessage } from "./image-handler.ts";
 import { searchMemories, getRecentMemories, clearMemories } from "./memory.ts";
 import { embedText, extractAndStore } from "./extraction.ts";
+import { triggerSelfUpgrade } from "./self-upgrade.ts";
+import { TELEGRAM_MAX_LENGTH, formatCostFooter, splitMessage, sendSplitMessages } from "./telegram-utils.ts";
 
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
-const TELEGRAM_MAX_LENGTH = 4096;
 const DEFAULT_AGENT_ID = "main";
 const STREAM_DEBOUNCE_MS = 800;
 const STREAM_MIN_CHARS = 100;
@@ -218,6 +219,15 @@ export function createBot(): Bot {
         await ctx.reply(`Switched to ${found}\ncwd: ${projectPath}`);
       } else {
         await ctx.reply(`Unknown project: ${name}\nUse /projects to see available.`);
+      }
+      return;
+    }
+
+    if (text === "/update") {
+      await ctx.reply("\u{1F504} Starting self-upgrade. Bot will restart shortly...");
+      const result = await triggerSelfUpgrade();
+      if (!result.ok) {
+        await ctx.reply(`✗ Failed to trigger updater (exit ${result.exitCode}): ${result.stderr.slice(0, 500)}`);
       }
       return;
     }
@@ -453,29 +463,4 @@ export async function handleMessageStreaming(
   }
 }
 
-function formatCostFooter(result: AgentResult): string {
-  const cost = result.costUsd.toFixed(4);
-  return `\u{1F4CA} In: ${result.inputTokens.toLocaleString()} | Out: ${result.outputTokens.toLocaleString()} | $${cost}`;
-}
 
-async function sendSplitMessages(ctx: Context, text: string): Promise<void> {
-  const chunks = splitMessage(text);
-  for (const chunk of chunks) {
-    await ctx.reply(chunk);
-  }
-}
-
-function splitMessage(text: string): string[] {
-  if (text.length <= TELEGRAM_MAX_LENGTH) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= TELEGRAM_MAX_LENGTH) { chunks.push(remaining); break; }
-    let splitIndex = remaining.lastIndexOf("\n", TELEGRAM_MAX_LENGTH);
-    if (splitIndex <= 0) splitIndex = remaining.lastIndexOf(" ", TELEGRAM_MAX_LENGTH);
-    if (splitIndex <= 0) splitIndex = TELEGRAM_MAX_LENGTH;
-    chunks.push(remaining.slice(0, splitIndex));
-    remaining = remaining.slice(splitIndex).replace(/^\n/, "");
-  }
-  return chunks;
-}
