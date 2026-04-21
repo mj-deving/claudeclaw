@@ -5,8 +5,25 @@ import path from "node:path";
 
 const TG_IMAGE_OUT_DIR = "/tmp/claudeclaw/out";
 const TG_IMAGE_REGEX = /\[TG_IMAGE:\s*([^\]\n]+)\]/g;
+const TG_IMAGE_COMPLETE = /\[TG_IMAGE:\s*[^\]\n]+\]/g;
+const TG_IMAGE_DANGLING = /\[TG_IMAGE:[^\]\n]*$/;
 const TG_IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const TG_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Strip complete sentinels AND any trailing unclosed sentinel that's still streaming. */
+export function stripSentinelsForDisplay(text: string): string {
+  return text.replace(TG_IMAGE_COMPLETE, "").replace(TG_IMAGE_DANGLING, "").replace(/\n{3,}/g, "\n\n");
+}
+
+/** Find a raw-char split point ≤ maxLen that does not land mid-sentinel. */
+export function findSafeSplitBoundary(text: string, maxLen: number): number {
+  if (text.length <= maxLen) return text.length;
+  const slice = text.slice(0, maxLen);
+  const dangling = slice.match(TG_IMAGE_DANGLING);
+  if (!dangling) return maxLen;
+  const safe = maxLen - dangling[0].length;
+  return safe > 0 ? safe : maxLen;
+}
 
 export function ensureOutputDir(): void {
   if (!existsSync(TG_IMAGE_OUT_DIR)) {

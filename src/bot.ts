@@ -19,7 +19,7 @@ import { TELEGRAM_MAX_LENGTH, formatCostFooter, splitMessage, sendSplitMessages 
 
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { extractAndValidateImages, ensureOutputDir } from "./image-output.ts";
+import { extractAndValidateImages, ensureOutputDir, stripSentinelsForDisplay, findSafeSplitBoundary } from "./image-output.ts";
 
 export { ensureOutputDir };
 
@@ -355,37 +355,34 @@ export async function handleMessageStreaming(
       return;
     }
 
+    // committedLength stays in raw-char space; we only transform what Telegram renders.
+    const segmentDisplay = stripSentinelsForDisplay(currentSegment);
+    if (!segmentDisplay.trim()) return;
+
     try {
       if (currentSegment.length > TELEGRAM_MAX_LENGTH && streamedMessageId) {
-        // Current message overflows — freeze it and start a new one
-        const freezeText = currentSegment.slice(0, TELEGRAM_MAX_LENGTH);
-        const edited = await ctx.api.editMessageText(chatId, streamedMessageId, freezeText).catch(() => null);
-        if (!edited) return; // Freeze failed — don't advance committedLength, retry next flush
-        committedLength += freezeText.length;
-
-        // Start new message with overflow
-        const overflow = currentSegment.slice(TELEGRAM_MAX_LENGTH);
-        if (overflow.length > 0) {
-          const display = overflow.length > TELEGRAM_MAX_LENGTH
-            ? overflow.slice(0, TELEGRAM_MAX_LENGTH)
-            : overflow;
-          const sent = await ctx.reply(display);
-          streamedMessageId = sent.message_id;
+        const rawCut = findSafeSplitBoundary(currentSegment, TELEGRAM_MAX_LENGTH);
+        const freezeRaw = currentSegment.slice(0, rawCut);
+        const freezeDisplay = stripSentinelsForDisplay(freezeRaw).slice(0, TELEGRAM_MAX_LENGTH);
+        if (!freezeDisplay) return;
+        const edited = await ctx.api.editMessageText(chatId, streamedMessageId, freezeDisplay).catch(() => null);
+        if (!edited) return;
+        committedLength += freezeRaw.length;
+        const overflowRaw = currentSegment.slice(rawCut);
+        if (overflowRaw.length > 0) {
+          const overflowDisplay = stripSentinelsForDisplay(overflowRaw).slice(0, TELEGRAM_MAX_LENGTH);
+          if (overflowDisplay) {
+            const sent = await ctx.reply(overflowDisplay);
+            streamedMessageId = sent.message_id;
+          }
         }
       } else if (streamedMessageId) {
-        // Edit existing message with current segment
-        await ctx.api.editMessageText(chatId, streamedMessageId, currentSegment).catch(() => {});
+        await ctx.api.editMessageText(chatId, streamedMessageId, segmentDisplay.slice(0, TELEGRAM_MAX_LENGTH)).catch(() => {});
       } else {
-        // Send first message
-        const display = currentSegment.length > TELEGRAM_MAX_LENGTH
-          ? currentSegment.slice(0, TELEGRAM_MAX_LENGTH)
-          : currentSegment;
-        const sent = await ctx.reply(display);
+        const sent = await ctx.reply(segmentDisplay.slice(0, TELEGRAM_MAX_LENGTH));
         streamedMessageId = sent.message_id;
       }
-    } catch {
-      // Edit can fail if message hasn't changed — ignore
-    }
+    } catch {}
     lastFlush = Date.now();
   }
 
