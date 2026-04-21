@@ -6,7 +6,10 @@ import path from "node:path";
 const TG_IMAGE_OUT_DIR = "/tmp/claudeclaw/out";
 const TG_IMAGE_REGEX = /\[TG_IMAGE:\s*([^\]\n]+)\]/g;
 const TG_IMAGE_COMPLETE = /\[TG_IMAGE:\s*[^\]\n]+\]/g;
-const TG_IMAGE_DANGLING = /\[TG_IMAGE:[^\]\n]*$/;
+// Matches any prefix of `[TG_IMAGE:` at end-of-string (so a split landing
+// inside the opener — e.g. `…[TG_IMAG` — is still detected), plus the full
+// opener followed by path chars when the colon has arrived.
+const TG_IMAGE_DANGLING = /\[(?:T(?:G(?:_(?:I(?:M(?:A(?:G(?:E(?::[^\]\n]*)?)?)?)?)?)?)?)?)?$/;
 const TG_IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const TG_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
