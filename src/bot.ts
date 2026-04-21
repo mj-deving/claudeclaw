@@ -306,7 +306,8 @@ async function handleMessageStreaming(
       if (currentSegment.length > TELEGRAM_MAX_LENGTH && streamedMessageId) {
         // Current message overflows — freeze it and start a new one
         const freezeText = currentSegment.slice(0, TELEGRAM_MAX_LENGTH);
-        await ctx.api.editMessageText(chatId, streamedMessageId, freezeText).catch(() => {});
+        const edited = await ctx.api.editMessageText(chatId, streamedMessageId, freezeText).catch(() => null);
+        if (!edited) return; // Freeze failed — don't advance committedLength, retry next flush
         committedLength += freezeText.length;
 
         // Start new message with overflow
