@@ -9,6 +9,7 @@ import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./securi
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard, triageView } from "./capture-handler.ts";
 import { handleVoiceMessage } from "./voice.ts";
+import { takePhotoCombo, handleVoiceComboWithPhoto } from "./combo-buffer.ts";
 import { handlePhotoMessage } from "./image-handler.ts";
 import { handleDocumentMessage } from "./document-handler.ts";
 import { searchMemories, getRecentMemories, clearMemories } from "./memory.ts";
@@ -270,6 +271,12 @@ export function createBot(): Bot {
     }
     if (isPinEnabled()) touchActivity(chatId);
 
+    const combo = takePhotoCombo(chatId);
+    if (combo) {
+      await handleVoiceComboWithPhoto(ctx, chatId, combo);
+      return;
+    }
+
     enqueue(chatId, async () => {
       await handleVoiceMessage(ctx, chatId);
     });
@@ -489,5 +496,4 @@ export async function handleMessageStreaming(
     clearInterval(typingInterval);
   }
 }
-
 

@@ -6,6 +6,7 @@ import path from "node:path";
 import { config } from "./config.ts";
 import { handleMessageStreaming } from "./bot.ts";
 import { enqueue } from "./queue.ts";
+import { stagePhotoCombo } from "./combo-buffer.ts";
 
 const IMAGE_DIR = "/tmp/claudeclaw/images";
 const IMAGE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -129,11 +130,7 @@ export async function handlePhotoMessage(ctx: Context, chatId: number): Promise<
     return;
   }
 
-  const promptText = caption
-    ? `[Image attached: ${result.filepath}]\n\n${caption}`
-    : `[Image attached: ${result.filepath}]\n\nAnalyze this image.`;
-
-  await handleMessageStreaming(ctx, chatId, promptText);
+  stagePhotoCombo(chatId, result.filepath, caption, ctx);
 }
 
 /** Delete images older than TTL. Safe to call on startup or periodically. */
