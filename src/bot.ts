@@ -283,33 +283,51 @@ async function handleMessageStreaming(
 
   let streamedMessageId: number | null = null;
   let buffer = "";
+  let committedLength = 0; // chars already frozen in previous messages
   let lastFlush = 0;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function flushBuffer() {
     if (!buffer) return;
-    const text = buffer;
+
+    // Only work with the un-committed portion (chars not yet frozen)
+    const currentSegment = buffer.slice(committedLength);
+    if (!currentSegment) return;
 
     // Exfiltration guard on streamed content
-    const scan = scanForSecrets(text);
+    const scan = scanForSecrets(currentSegment);
     if (!scan.clean) {
       console.warn(`[exfiltration] Blocked streamed content for chat ${chatId}`);
-      buffer = "[Content redacted — contained sensitive data]";
+      buffer = buffer.slice(0, committedLength) + "[Content redacted — contained sensitive data]";
+      return;
     }
 
     try {
-      if (streamedMessageId) {
-        // Edit existing message with accumulated text
-        const truncated = text.length > TELEGRAM_MAX_LENGTH
-          ? text.slice(0, TELEGRAM_MAX_LENGTH - 20) + "\n\n[truncated]"
-          : text;
-        await ctx.api.editMessageText(chatId, streamedMessageId, truncated).catch(() => {});
+      if (currentSegment.length > TELEGRAM_MAX_LENGTH && streamedMessageId) {
+        // Current message overflows — freeze it and start a new one
+        const freezeText = currentSegment.slice(0, TELEGRAM_MAX_LENGTH);
+        const edited = await ctx.api.editMessageText(chatId, streamedMessageId, freezeText).catch(() => null);
+        if (!edited) return; // Freeze failed — don't advance committedLength, retry next flush
+        committedLength += freezeText.length;
+
+        // Start new message with overflow
+        const overflow = currentSegment.slice(TELEGRAM_MAX_LENGTH);
+        if (overflow.length > 0) {
+          const display = overflow.length > TELEGRAM_MAX_LENGTH
+            ? overflow.slice(0, TELEGRAM_MAX_LENGTH)
+            : overflow;
+          const sent = await ctx.reply(display);
+          streamedMessageId = sent.message_id;
+        }
+      } else if (streamedMessageId) {
+        // Edit existing message with current segment
+        await ctx.api.editMessageText(chatId, streamedMessageId, currentSegment).catch(() => {});
       } else {
         // Send first message
-        const truncated = text.length > TELEGRAM_MAX_LENGTH
-          ? text.slice(0, TELEGRAM_MAX_LENGTH - 20) + "\n\n[truncated]"
-          : text;
-        const sent = await ctx.reply(truncated);
+        const display = currentSegment.length > TELEGRAM_MAX_LENGTH
+          ? currentSegment.slice(0, TELEGRAM_MAX_LENGTH)
+          : currentSegment;
+        const sent = await ctx.reply(display);
         streamedMessageId = sent.message_id;
       }
     } catch {
@@ -389,12 +407,20 @@ async function handleMessageStreaming(
       return;
     }
 
-    // Send/edit final message
+    // Send/edit final message — split across messages if needed
+    const finalSegment = fullResponse.slice(committedLength);
     if (streamedMessageId) {
-      const truncated = fullResponse.length > TELEGRAM_MAX_LENGTH
-        ? fullResponse.slice(0, TELEGRAM_MAX_LENGTH - 20) + "\n\n[truncated]"
-        : fullResponse;
-      await ctx.api.editMessageText(chatId, streamedMessageId, truncated).catch(() => {});
+      if (finalSegment.length <= TELEGRAM_MAX_LENGTH) {
+        // Fits in the current message — just edit it
+        await ctx.api.editMessageText(chatId, streamedMessageId, finalSegment).catch(() => {});
+      } else {
+        // Split: edit current message with first chunk, send rest as new messages
+        const chunks = splitMessage(finalSegment);
+        await ctx.api.editMessageText(chatId, streamedMessageId, chunks[0]!).catch(() => {});
+        for (let i = 1; i < chunks.length; i++) {
+          await ctx.reply(chunks[i]!);
+        }
+      }
     } else {
       await sendSplitMessages(ctx, fullResponse);
     }
