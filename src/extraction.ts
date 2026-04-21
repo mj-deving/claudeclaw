@@ -1,36 +1,51 @@
-/** Gemini-powered fact extraction and embedding. Fire-and-forget, never blocks. */
+/** Claude + Voyage-powered fact extraction and embedding. Fire-and-forget, never blocks. */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.ts";
 import { storeMemory } from "./memory.ts";
 
-let genai: GoogleGenerativeAI | null = null;
+let anthropic: Anthropic | null = null;
 
-function getClient(): GoogleGenerativeAI | null {
-  if (!config.geminiApiKey) return null;
-  if (!genai) {
-    genai = new GoogleGenerativeAI(config.geminiApiKey);
+function getAnthropicClient(): Anthropic | null {
+  if (!config.anthropicApiKey) return null;
+  if (!anthropic) {
+    anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
   }
-  return genai;
+  return anthropic;
 }
 
-/** Embed text into 768-dim vector via text-embedding-004. */
+/** Embed text into 512-dim vector via Voyage AI voyage-3-lite. */
 export async function embedText(text: string): Promise<Float32Array | null> {
-  const client = getClient();
-  if (!client) return null;
+  if (!config.voyageApiKey) return null;
 
-  const model = client.getGenerativeModel({ model: "text-embedding-004" });
-  const result = await model.embedContent(text);
-  const values = result.embedding.values;
+  const response = await fetch("https://api.voyageai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.voyageApiKey}`,
+    },
+    body: JSON.stringify({
+      input: text,
+      model: "voyage-3-lite",
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Voyage API error ${response.status}: ${body}`);
+  }
+
+  const data = (await response.json()) as { data: Array<{ embedding: number[] }> };
+  const values = data.data[0]?.embedding;
+  if (!values) return null;
   return new Float32Array(values);
 }
 
-/** Extract atomic facts from a conversation turn via Gemini Flash. */
+/** Extract atomic facts from a conversation turn via Claude Haiku. */
 async function extractFacts(userMsg: string, agentResponse: string): Promise<string[]> {
-  const client = getClient();
+  const client = getAnthropicClient();
   if (!client) return [];
 
-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
   const prompt = [
     "Extract key facts from this conversation that would be useful to remember for future conversations.",
     "Return ONLY a JSON array of short, atomic fact strings. No explanation, no markdown — just the JSON array.",
@@ -41,8 +56,15 @@ async function extractFacts(userMsg: string, agentResponse: string): Promise<str
     "Assistant: " + agentResponse.slice(0, 2000),
   ].join("\n");
 
-  const result = await model.generateContent(prompt);
-  const text = result.response.text().trim();
+  const result = await client.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const block = result.content[0];
+  if (!block || block.type !== "text") return [];
+  const text = block.text.trim();
 
   // Parse JSON array from response — handle markdown code fences
   const cleaned = text.replace(/^```json?\s*/, "").replace(/\s*```$/, "");
@@ -56,7 +78,7 @@ async function extractFacts(userMsg: string, agentResponse: string): Promise<str
  * Call this AFTER sending the response — it never blocks the user.
  */
 export function extractAndStore(chatId: number, userMsg: string, agentResponse: string): void {
-  if (!config.geminiApiKey) return;
+  if (!config.anthropicApiKey || !config.voyageApiKey) return;
 
   // Fire and forget — don't await
   doExtraction(chatId, userMsg, agentResponse).catch((err) => {

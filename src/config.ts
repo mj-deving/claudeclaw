@@ -30,8 +30,11 @@ export const config = {
   agentTimeoutMs: Number(optional("AGENT_TIMEOUT_MS", "900000")),
   agentCwd: optional("AGENT_CWD", process.env.HOME ?? "/home"),
 
-  // Gemini — embeddings + fact extraction
-  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+  // Anthropic — fact extraction via Claude Messages API
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+
+  // Voyage AI — semantic embeddings
+  voyageApiKey: process.env.VOYAGE_API_KEY ?? "",
 
   // Groq Whisper STT
   groqApiKey: process.env.GROQ_API_KEY ?? "",
