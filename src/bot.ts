@@ -10,6 +10,7 @@ import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts"
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard, triageView } from "./capture-handler.ts";
 import { handleVoiceMessage } from "./voice.ts";
 import { handlePhotoMessage } from "./image-handler.ts";
+import { handleDocumentMessage } from "./document-handler.ts";
 import { searchMemories, getRecentMemories, clearMemories } from "./memory.ts";
 import { embedText, extractAndStore } from "./extraction.ts";
 import { triggerSelfUpgrade } from "./self-upgrade.ts";
@@ -287,10 +288,25 @@ export function createBot(): Bot {
     });
   });
 
+  // Handle document messages — download then route to agent with file path
+  bot.on("message:document", async (ctx) => {
+    const chatId = ctx.chat.id;
+
+    if (isPinEnabled() && isLocked(chatId)) {
+      await ctx.reply("\u{1F512} Session is locked. Use /unlock <pin> to unlock.");
+      return;
+    }
+    if (isPinEnabled()) touchActivity(chatId);
+
+    enqueue(chatId, async () => {
+      await handleDocumentMessage(ctx, chatId);
+    });
+  });
+
   // Reject other message types
   bot.on("message", async (ctx) => {
-    if (!ctx.message.text && !ctx.message.voice && !ctx.message.photo) {
-      await ctx.reply("I can handle text, voice, and photo messages.");
+    if (!ctx.message.text && !ctx.message.voice && !ctx.message.photo && !ctx.message.document) {
+      await ctx.reply("I can handle text, voice, photo, and document messages.");
     }
   });
 
