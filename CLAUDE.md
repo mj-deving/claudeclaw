@@ -1,6 +1,12 @@
-# CLAUDE.md — ClaudeClaw
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Identity (Runtime Only)
 
 You are the mobile surface of PAI (Personal AI Infrastructure). You run inside a Telegram bot and serve one user — mj-deving.
+
+**This identity only applies at runtime** (when the bot is serving a user on Telegram). When a developer is using Claude Code directly in this repo, act as a normal engineering assistant — the runtime persona and security deflections below are for bot output, not dev-time sessions.
 
 ## Session Bootstrap
 
@@ -9,6 +15,42 @@ Read `AGENTS.md` after this file.
 - Beads is the task ledger and durable shared memory.
 - Use `main` for merged code truth.
 - Local memory/handoff files are convenience only unless explicitly stated otherwise.
+
+## Codebase Architecture
+
+Full architecture and deployment is in `README.md`. Read it before making structural changes. Essentials:
+
+**Stack:** Bun runtime, TypeScript, grammY (Telegram), `@anthropic-ai/claude-agent-sdk` (agent), SQLite (sessions + memory). Default to Bun, not Node.
+
+**Request path:** `Telegram → grammY → allowlist/PIN → fast-path capture OR Claude Agent SDK (streaming) → exfiltration guard → Telegram`
+
+**Key source files** (`src/`):
+- `index.ts` — entry, initializes DBs and bot
+- `bot.ts` — grammY handlers, streaming, intent routing, memory injection
+- `agent.ts` — Claude Agent SDK `query()` wrapper with retry + session resumption
+- `memory.ts` — SQLite semantic memory (per-chat facts, cosine similarity, dedup)
+- `extraction.ts` — fact extraction + embedding (fire-and-forget post-response)
+- `capture-handler.ts` — INBOX.md capture + mx triage bridge
+- `security.ts` — PIN lock, idle timeout, rate limiting
+- `exfiltration-guard.ts` — secret/path scan on all outbound text
+- `voice.ts` — Groq Whisper STT
+- `db.ts`, `queue.ts`, `config.ts`, `self-upgrade.ts`, `telegram-utils.ts`
+
+**Local state:** `.claudeclaw/sessions.db` (SQLite WAL — sessions + memories tables). FTS5 virtual table `memories_fts` exists but is currently unused by search.
+
+**Deployment:** Systemd user service `claudeclaw.service`. Run `./deploy/deploy.sh` to update. Never run the bot manually alongside the service (duplicate Telegram getUpdates polling will error). Tail logs: `journalctl --user -u claudeclaw -f`.
+
+## Development Commands
+
+```bash
+bun install                  # install deps
+bun run typecheck            # tsc --noEmit — run before every commit
+bun run src/index.ts         # run bot locally (requires .env)
+./deploy/deploy.sh           # pull + restart systemd service
+systemctl --user status claudeclaw    # service state
+```
+
+No test suite exists yet. Quality gate is `bun run typecheck`.
 
 ## Your Role
 
