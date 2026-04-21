@@ -1,6 +1,6 @@
 /** Grammy bot — allowlist, PIN lock, exfiltration guard, streaming responses, voice transcription. */
 
-import { Bot, type Context } from "grammy";
+import { Bot, type Context, InputFile } from "grammy";
 import { config } from "./config.ts";
 import { getSession, upsertSession, getActiveProject, setActiveProject } from "./db.ts";
 import { enqueue } from "./queue.ts";
@@ -18,6 +18,9 @@ import { TELEGRAM_MAX_LENGTH, formatCostFooter, splitMessage, sendSplitMessages 
 
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { extractAndValidateImages, ensureOutputDir } from "./image-output.ts";
+
+export { ensureOutputDir };
 
 const DEFAULT_AGENT_ID = "main";
 const STREAM_DEBOUNCE_MS = 800;
@@ -450,14 +453,16 @@ export async function handleMessageStreaming(
       return;
     }
 
+    // Extract [TG_IMAGE: path] sentinels → send as photos after text
+    const { text: cleanedResponse, paths: imagePaths } = extractAndValidateImages(fullResponse, activeCwd);
+    const outgoingText = cleanedResponse.trim().length > 0 ? cleanedResponse : fullResponse;
+
     // Send/edit final message — split across messages if needed
-    const finalSegment = fullResponse.slice(committedLength);
+    const finalSegment = outgoingText.slice(committedLength);
     if (streamedMessageId) {
       if (finalSegment.length <= TELEGRAM_MAX_LENGTH) {
-        // Fits in the current message — just edit it
         await ctx.api.editMessageText(chatId, streamedMessageId, finalSegment).catch(() => {});
       } else {
-        // Split: edit current message with first chunk, send rest as new messages
         const chunks = splitMessage(finalSegment);
         await ctx.api.editMessageText(chatId, streamedMessageId, chunks[0]!).catch(() => {});
         for (let i = 1; i < chunks.length; i++) {
@@ -465,7 +470,13 @@ export async function handleMessageStreaming(
         }
       }
     } else {
-      await sendSplitMessages(ctx, fullResponse);
+      await sendSplitMessages(ctx, outgoingText);
+    }
+
+    for (const filepath of imagePaths) {
+      await ctx.replyWithPhoto(new InputFile(filepath)).catch((e) => {
+        console.warn("[bot] photo send failed", e);
+      });
     }
 
     // Fire-and-forget memory extraction — never blocks response delivery
