@@ -3,6 +3,7 @@
 import { initDb, closeDb } from "./db.ts";
 import { initMemoryDb } from "./memory.ts";
 import { createBot } from "./bot.ts";
+import { cleanupOldImages } from "./image-handler.ts";
 
 console.log("[claudeclaw] Starting...");
 
@@ -11,12 +12,23 @@ initDb();
 initMemoryDb();
 console.log("[claudeclaw] Database initialized");
 
+// Clean up stale photo downloads on boot
+const removed = cleanupOldImages();
+if (removed > 0) console.log(`[claudeclaw] Cleaned ${removed} stale image(s)`);
+
+// Periodic image cleanup — every 6 hours
+const imageCleanupTimer = setInterval(() => {
+  const n = cleanupOldImages();
+  if (n > 0) console.log(`[claudeclaw] Cleaned ${n} stale image(s)`);
+}, 6 * 60 * 60 * 1000);
+
 // Create and start bot
 const bot = createBot();
 
 // Graceful shutdown
 function shutdown(signal: string): void {
   console.log(`[claudeclaw] Received ${signal}, shutting down...`);
+  clearInterval(imageCleanupTimer);
   bot.stop();
   closeDb();
   process.exit(0);
