@@ -43,10 +43,12 @@ echo ">>> bun install"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 echo ">>> Installing systemd service"
 mkdir -p "$SYSTEMD_DIR"
-sed -e "s|__HOME__|$HOME|g" \
-    -e "s|__PROJECT__|$PROJECT_DIR|g" \
-    -e "s|__BUN__|$BUN_PATH|g" \
-    deploy/claudeclaw.service > "$SYSTEMD_DIR/$SERVICE_NAME.service"
+for unit in claudeclaw.service claudeclaw-update.service; do
+  sed -e "s|__HOME__|$HOME|g" \
+      -e "s|__PROJECT__|$PROJECT_DIR|g" \
+      -e "s|__BUN__|$BUN_PATH|g" \
+      "deploy/$unit" > "$SYSTEMD_DIR/$unit"
+done
 systemctl --user daemon-reload
 systemctl --user enable "$SERVICE_NAME"
 
