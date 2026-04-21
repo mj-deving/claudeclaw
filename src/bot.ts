@@ -271,13 +271,13 @@ export function createBot(): Bot {
     }
     if (isPinEnabled()) touchActivity(chatId);
 
-    const combo = takePhotoCombo(chatId);
-    if (combo) {
-      await handleVoiceComboWithPhoto(ctx, chatId, combo);
-      return;
-    }
-
+    // Check combo inside the queue so a preceding photo-download task stages it first.
     enqueue(chatId, async () => {
+      const combo = takePhotoCombo(chatId);
+      if (combo) {
+        await handleVoiceComboWithPhoto(ctx, chatId, combo);
+        return;
+      }
       await handleVoiceMessage(ctx, chatId);
     });
   });
@@ -460,12 +460,13 @@ export async function handleMessageStreaming(
       return;
     }
 
-    // Extract [TG_IMAGE: path] sentinels → send as photos after text
-    const { text: cleanedResponse, paths: imagePaths } = extractAndValidateImages(fullResponse, activeCwd);
-    const outgoingText = cleanedResponse.trim().length > 0 ? cleanedResponse : fullResponse;
+    // Slice against fullResponse (pre-strip) so committedLength stays consistent.
+    const { paths: imagePaths } = extractAndValidateImages(fullResponse, activeCwd);
+    const finalRaw = fullResponse.slice(committedLength);
+    const { text: finalStripped } = extractAndValidateImages(finalRaw, activeCwd);
+    const finalSegment = finalStripped.trim().length > 0 ? finalStripped : finalRaw;
 
     // Send/edit final message — split across messages if needed
-    const finalSegment = outgoingText.slice(committedLength);
     if (streamedMessageId) {
       if (finalSegment.length <= TELEGRAM_MAX_LENGTH) {
         await ctx.api.editMessageText(chatId, streamedMessageId, finalSegment).catch(() => {});
@@ -477,7 +478,7 @@ export async function handleMessageStreaming(
         }
       }
     } else {
-      await sendSplitMessages(ctx, outgoingText);
+      await sendSplitMessages(ctx, finalSegment);
     }
 
     for (const filepath of imagePaths) {

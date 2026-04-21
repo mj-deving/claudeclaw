@@ -1,6 +1,6 @@
 /** Agent → Telegram image output: parse [TG_IMAGE: path] sentinels from agent responses. */
 
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 const TG_IMAGE_OUT_DIR = "/tmp/claudeclaw/out";
@@ -32,15 +32,24 @@ export function extractAndValidateImages(text: string, activeCwd: string): Extra
       console.warn(`[bot] TG_IMAGE rejected (not absolute): ${raw}`);
       continue;
     }
-    const resolved = path.resolve(raw);
-    const inOutDir = resolved.startsWith(TG_IMAGE_OUT_DIR + path.sep) || resolved === TG_IMAGE_OUT_DIR;
-    const inCwd = resolved.startsWith(path.resolve(activeCwd) + path.sep);
-    if (!inOutDir && !inCwd) {
-      console.warn(`[bot] TG_IMAGE rejected (outside allowed dirs): ${resolved}`);
+    // Canonicalize via realpath so symlinks cannot escape the allowlist.
+    let resolved: string;
+    try {
+      resolved = realpathSync(path.resolve(raw));
+    } catch {
+      console.warn(`[bot] TG_IMAGE rejected (realpath failed): ${raw}`);
       continue;
     }
-    if (!existsSync(resolved)) {
-      console.warn(`[bot] TG_IMAGE rejected (does not exist): ${resolved}`);
+    const outDirReal = (() => {
+      try { return realpathSync(TG_IMAGE_OUT_DIR); } catch { return TG_IMAGE_OUT_DIR; }
+    })();
+    const cwdReal = (() => {
+      try { return realpathSync(path.resolve(activeCwd)); } catch { return path.resolve(activeCwd); }
+    })();
+    const inOutDir = resolved.startsWith(outDirReal + path.sep) || resolved === outDirReal;
+    const inCwd = resolved.startsWith(cwdReal + path.sep);
+    if (!inOutDir && !inCwd) {
+      console.warn(`[bot] TG_IMAGE rejected (outside allowed dirs): ${resolved}`);
       continue;
     }
     const ext = path.extname(resolved).toLowerCase();
