@@ -8,7 +8,8 @@ import { runAgentWithRetry, type AgentResult } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard, triageView } from "./capture-handler.ts";
-import { transcribeVoice } from "./voice.ts";
+import { handleVoiceMessage } from "./voice.ts";
+import { handlePhotoMessage } from "./image-handler.ts";
 import { searchMemories, getRecentMemories, clearMemories } from "./memory.ts";
 import { embedText, extractAndStore } from "./extraction.ts";
 
@@ -260,10 +261,26 @@ export function createBot(): Bot {
     });
   });
 
+  // Handle photo messages — download then route to agent with file path
+  bot.on("message:photo", async (ctx) => {
+    const chatId = ctx.chat.id;
+
+    // PIN lock check for photos
+    if (isPinEnabled() && isLocked(chatId)) {
+      await ctx.reply("\u{1F512} Session is locked. Use /unlock <pin> to unlock.");
+      return;
+    }
+    if (isPinEnabled()) touchActivity(chatId);
+
+    enqueue(chatId, async () => {
+      await handlePhotoMessage(ctx, chatId);
+    });
+  });
+
   // Reject other message types
   bot.on("message", async (ctx) => {
-    if (!ctx.message.text && !ctx.message.voice) {
-      await ctx.reply("I can handle text and voice messages.");
+    if (!ctx.message.text && !ctx.message.voice && !ctx.message.photo) {
+      await ctx.reply("I can handle text, voice, and photo messages.");
     }
   });
 
@@ -271,7 +288,7 @@ export function createBot(): Bot {
 }
 
 /** Handle text messages with streaming response to Telegram. */
-async function handleMessageStreaming(
+export async function handleMessageStreaming(
   ctx: Context,
   chatId: number,
   text: string,
@@ -434,40 +451,6 @@ async function handleMessageStreaming(
   } finally {
     clearInterval(typingInterval);
   }
-}
-
-/** Handle voice messages — transcribe via Groq Whisper, then route to agent. */
-async function handleVoiceMessage(
-  ctx: Context,
-  chatId: number,
-): Promise<void> {
-  const voice = ctx.message?.voice;
-  if (!voice) return;
-
-  await ctx.replyWithChatAction("typing").catch(() => {});
-
-  // Get file URL from Telegram
-  const file = await ctx.api.getFile(voice.file_id);
-  const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
-
-  // Transcribe
-  const duration = voice.duration;
-  await ctx.reply(`\u{1F399}\uFE0F Transcribing ${duration}s voice note...`);
-
-  const transcription = await transcribeVoice(fileUrl);
-  if (!transcription.success) {
-    await ctx.reply(`\u2717 Transcription failed: ${transcription.error}`);
-    return;
-  }
-
-  // Show transcription
-  const preview = transcription.text.length > 200
-    ? transcription.text.slice(0, 200) + "..."
-    : transcription.text;
-  await ctx.reply(`\u{1F399}\uFE0F Transcribed:\n${preview}\n\nProcessing...`);
-
-  // Route transcribed text through the agent (PAI-aware)
-  await handleMessageStreaming(ctx, chatId, transcription.text);
 }
 
 function formatCostFooter(result: AgentResult): string {

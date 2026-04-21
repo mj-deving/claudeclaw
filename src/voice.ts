@@ -1,6 +1,8 @@
 /** Voice transcription via Groq Whisper — .oga from Telegram → text. */
 
+import type { Context } from "grammy";
 import { config } from "./config.ts";
+import { handleMessageStreaming } from "./bot.ts";
 
 export interface TranscriptionResult {
   success: boolean;
@@ -58,4 +60,30 @@ export async function transcribeVoice(fileUrl: string): Promise<TranscriptionRes
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+/** Handle voice messages — transcribe via Groq Whisper, then route to agent. */
+export async function handleVoiceMessage(ctx: Context, chatId: number): Promise<void> {
+  const voice = ctx.message?.voice;
+  if (!voice) return;
+
+  await ctx.replyWithChatAction("typing").catch(() => {});
+
+  const file = await ctx.api.getFile(voice.file_id);
+  const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+
+  await ctx.reply(`\u{1F399}\uFE0F Transcribing ${voice.duration}s voice note...`);
+
+  const transcription = await transcribeVoice(fileUrl);
+  if (!transcription.success) {
+    await ctx.reply(`\u2717 Transcription failed: ${transcription.error}`);
+    return;
+  }
+
+  const preview = transcription.text.length > 200
+    ? transcription.text.slice(0, 200) + "..."
+    : transcription.text;
+  await ctx.reply(`\u{1F399}\uFE0F Transcribed:\n${preview}\n\nProcessing...`);
+
+  await handleMessageStreaming(ctx, chatId, transcription.text);
 }
