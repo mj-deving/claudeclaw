@@ -34,7 +34,7 @@ Full architecture and deployment is in `README.md`. Read it before making struct
 - `security.ts` — PIN lock, idle timeout, rate limiting
 - `exfiltration-guard.ts` — secret/path scan on all outbound text
 - `voice.ts` — Groq Whisper STT
-- `db.ts`, `queue.ts`, `config.ts`, `self-upgrade.ts`, `telegram-utils.ts`
+- `db.ts`, `queue.ts`, `config.ts`
 
 **Local state:** `.claudeclaw/sessions.db` (SQLite WAL — sessions + memories tables). FTS5 virtual table `memories_fts` exists but is currently unused by search.
 
