@@ -1,6 +1,8 @@
-/** Telegram Menu button commands + /help text listing bot commands and PAI skills. */
+/** Telegram Menu button commands + /help text (dynamic skill list). */
 
 import type { Bot } from "grammy";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 
 const BOT_COMMANDS: Array<{ command: string; description: string }> = [
   { command: "add", description: "Capture idea to INBOX" },
@@ -27,7 +29,44 @@ export async function registerBotMenu(bot: Bot): Promise<void> {
   });
 }
 
-export const HELP_TEXT = [
+interface Skill { name: string; description: string }
+
+function parseFrontmatterDescription(text: string): string | null {
+  if (!text.startsWith("---")) return null;
+  const end = text.indexOf("\n---", 3);
+  if (end < 0) return null;
+  // Search the full frontmatter block INCLUDING the closing \n--- so the
+  // regex terminator always has something to match on.
+  const fm = text.slice(0, end + 4);
+  const match = fm.match(/^description:\s*([\s\S]+?)(?:\n[a-z_]+:|\n---)/m);
+  const captured = match?.[1];
+  if (!captured) return null;
+  return captured.replace(/\s+/g, " ").trim();
+}
+
+function scanSkills(): Skill[] {
+  const skillsDir = path.join(process.env.HOME ?? "", ".claude/skills");
+  try {
+    const entries = readdirSync(skillsDir);
+    const skills: Skill[] = [];
+    for (const name of entries) {
+      const skillPath = path.join(skillsDir, name);
+      try {
+        if (!statSync(skillPath).isDirectory()) continue;
+        const md = readFileSync(path.join(skillPath, "SKILL.md"), "utf8");
+        const desc = parseFrontmatterDescription(md);
+        if (!desc) continue;
+        const firstSentence = desc.split(/(?<=[.!?])\s/)[0] ?? desc;
+        skills.push({ name, description: firstSentence.slice(0, 120) });
+      } catch { /* skip unreadable skill dirs */ }
+    }
+    return skills.sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+const BOT_HELP = [
   "🎛 BOT COMMANDS",
   "/add /url /memo /remind — capture to INBOX",
   "/review /approve <n> /discard <n> /view <n> — triage queue",
@@ -38,62 +77,20 @@ export const HELP_TEXT = [
   "/update — self-upgrade bot",
   "/help — this list",
   "",
-  "🧠 PAI CORE",
-  "Pai — capability discovery, list skills, triggers, agents",
-  "Telos — goals, beliefs, reports, dashboards, job search, Bewerbung, CV",
-  "Agents — compose custom agents, parallel spawns, traits+voice",
-  "Thinking — first principles, brainstorm, red team, council, threat model",
-  "context-search / /cs — search prior sessions",
-  "",
-  "📝 CONTENT",
-  "ContentAnalysis — extract wisdom, summarize URL, transcripts,",
-  "   YouTube-to-ebook, channel digest, AI builders digest",
-  "Research — quick/standard/extensive/deep, Fabric patterns (242+)",
-  "Scraping — jina, crawl4ai, spider, bird (X/Twitter),",
-  "   discrawl (Discord), katana URL discovery, Apify",
-  "Investigation — OSINT, due diligence, people search, public records",
-  "",
-  "⚙️ DEV",
-  "Gsd — spec-driven dev: gsd new / plan / execute / verify / quick /",
-  "   progress / pause / resume / autonomous / health / diagnose",
-  "TDD — test-first, prove-it pattern, test pyramid, coverage",
-  "CodeReview — PR review, 5-axis eval, shellcheck, bash lint",
-  "GitWorkflow — commits, worktrees, git-cliff, changelog, save-point",
-  "Troubleshooting — 6-step triage, incidents, SEV1/2, postmortems",
-  "Documentation — ADR, API docs, JSDoc, OpenAPI, doc health",
-  "update-config — settings.json, hooks, permissions, env vars",
-  "claude-api — Anthropic SDK, prompt caching, model migration",
-  "",
-  "🎨 VISUALS",
-  "Media — illustrations, diagrams, mermaid, infographics, headers,",
-  "   thumbnails, comics, video via Remotion, Midjourney, bg removal",
-  "Frontend — UI, HTML, websites, design review, website factory,",
-  "   typeset, animate, colorize, audit, site teardown",
-  "VisualExplainer — HTML diagrams, slide decks, diff review,",
-  "   flowchart HTML, data-table viz, fact-check report",
-  "ScientificDeck — LaTeX Beamer, academic slides, rhetoric of decks",
-  "",
-  "📊 DATA",
-  "Data — DuckDB SQL, miller, xsv, gron, jq/yq,",
-  "   FRED/EIA/Treasury/BLS economic metrics (68 indicators)",
-  "DEMOS — SuperColony publishing, Isidore, DAHR attestation,",
-  "   TLSNotary, consensus signals, leaderboard",
-  "",
-  "🔐 OPS",
-  "Security — pentest, OWASP, prompt injection, CVE/Trivy scan,",
-  "   sops secret encryption",
-  "Utilities — CLI gen, skill scaffolding, Fabric, Codex, n8n,",
-  "   wrapup, beads mgmt, knowledge base, compound engineering",
-  "loop — recurring tasks on interval",
-  "schedule — cron-scheduled remote agents/triggers",
-  "keybindings-help — customize Claude Code shortcuts",
-  "simplify — review changed code for reuse, quality, efficiency",
-  "less-permission-prompts — scan transcripts, build allowlist",
-  "",
-  "🛠 CODEX BRIDGE",
-  "codex:rescue — second opinion, investigation, adversarial review",
-  "codex:setup — check CLI, toggle stop-time review gate",
-  "",
-  "💡 Say what you want — the router picks the skill.",
-  "   Triggers aren't exact — natural language works.",
 ].join("\n");
+
+function buildHelpText(): string {
+  const skills = scanSkills();
+  const skillLines = skills.length > 0
+    ? skills.map((s) => `• ${s.name} — ${s.description}`).join("\n")
+    : "(no skills found at ~/.claude/skills/)";
+  return [
+    BOT_HELP,
+    `🧠 CLAUDE SKILLS (${skills.length})`,
+    skillLines,
+    "",
+    "💡 Say what you want — the router picks the skill.",
+  ].join("\n");
+}
+
+export const HELP_TEXT = buildHelpText();
