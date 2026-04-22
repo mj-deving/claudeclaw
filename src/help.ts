@@ -1,8 +1,7 @@
-/** Telegram Menu button commands + /help text (dynamic skill list). */
+/** Telegram Menu button commands + /help text (dynamic skill list via pf). */
 
 import type { Bot } from "grammy";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const BOT_COMMANDS: Array<{ command: string; description: string }> = [
   { command: "add", description: "Capture idea to INBOX" },
@@ -31,34 +30,19 @@ export async function registerBotMenu(bot: Bot): Promise<void> {
 
 interface Skill { name: string; description: string }
 
-function parseFrontmatterDescription(text: string): string | null {
-  if (!text.startsWith("---")) return null;
-  const end = text.indexOf("\n---", 3);
-  if (end < 0) return null;
-  // Search the full frontmatter block INCLUDING the closing \n--- so the
-  // regex terminator always has something to match on.
-  const fm = text.slice(0, end + 4);
-  const match = fm.match(/^description:\s*([\s\S]+?)(?:\n[a-z_]+:|\n---)/m);
-  const captured = match?.[1];
-  if (!captured) return null;
-  return captured.replace(/\s+/g, " ").trim();
-}
-
 function scanSkills(): Skill[] {
-  const skillsDir = path.join(process.env.HOME ?? "", ".claude/skills");
+  // Delegate to PAI's authoritative discovery CLI — single source of truth
+  // across filesystem skills AND plugin-provided skills.
   try {
-    const entries = readdirSync(skillsDir);
+    const proc = spawnSync("pf", ["list", "skills", "--json"], { encoding: "utf8", timeout: 5000 });
+    if (proc.status !== 0 || !proc.stdout) return [];
+    const parsed = JSON.parse(proc.stdout) as Array<{ name?: unknown; description?: unknown }>;
+    if (!Array.isArray(parsed)) return [];
     const skills: Skill[] = [];
-    for (const name of entries) {
-      const skillPath = path.join(skillsDir, name);
-      try {
-        if (!statSync(skillPath).isDirectory()) continue;
-        const md = readFileSync(path.join(skillPath, "SKILL.md"), "utf8");
-        const desc = parseFrontmatterDescription(md);
-        if (!desc) continue;
-        const firstSentence = desc.split(/(?<=[.!?])\s/)[0] ?? desc;
-        skills.push({ name, description: firstSentence.slice(0, 120) });
-      } catch { /* skip unreadable skill dirs */ }
+    for (const row of parsed) {
+      if (typeof row.name !== "string" || typeof row.description !== "string") continue;
+      const firstSentence = row.description.split(/(?<=[.!?])\s/)[0] ?? row.description;
+      skills.push({ name: row.name, description: firstSentence.slice(0, 120) });
     }
     return skills.sort((a, b) => a.name.localeCompare(b.name));
   } catch {
