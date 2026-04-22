@@ -140,6 +140,8 @@ export function getRecentMemories(chatId: number, limit: number = 20): Memory[] 
 /** Clear all memories for a chat (/forget command). */
 export function clearMemories(chatId: number): number {
   const result = db.run("DELETE FROM memories WHERE chat_id = ?", [chatId]);
+  // Also purge any rows parked in the dim-swap migration backup so /forget is total.
+  db.run("DELETE FROM memories_legacy_backup WHERE chat_id = ?", [chatId]);
   return result.changes;
 }
 
