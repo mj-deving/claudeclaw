@@ -1,54 +1,93 @@
-/** Gemini-powered fact extraction and embedding. Fire-and-forget, never blocks. */
+/** Fact extraction via Groq Llama 4 + local BGE embeddings. Fire-and-forget, never blocks. */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
 import { config } from "./config.ts";
 import { storeMemory } from "./memory.ts";
 
-let genai: GoogleGenerativeAI | null = null;
+const EMBED_MODEL = "Xenova/bge-small-en-v1.5";
+const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
-function getClient(): GoogleGenerativeAI | null {
-  if (!config.geminiApiKey) return null;
-  if (!genai) {
-    genai = new GoogleGenerativeAI(config.geminiApiKey);
+let embedderPromise: Promise<FeatureExtractionPipeline> | null = null;
+
+function getEmbedder(): Promise<FeatureExtractionPipeline> {
+  if (!embedderPromise) {
+    embedderPromise = (pipeline("feature-extraction", EMBED_MODEL) as Promise<FeatureExtractionPipeline>)
+      .catch((err) => {
+        embedderPromise = null;
+        throw err;
+      });
   }
-  return genai;
+  return embedderPromise;
 }
 
-/** Embed text into 768-dim vector via text-embedding-004. */
+/** Pre-load the embedding model — fire-and-forget from boot to warm the cache. */
+export function warmEmbedder(): void {
+  getEmbedder().catch((err) => {
+    console.error("[memory] Embedder warmup failed:", err instanceof Error ? err.message : err);
+  });
+}
+
+/** Embed text into 384-dim vector via local BGE-small-en-v1.5 (mean-pooled, normalized). */
 export async function embedText(text: string): Promise<Float32Array | null> {
-  const client = getClient();
-  if (!client) return null;
-
-  const model = client.getGenerativeModel({ model: "text-embedding-004" });
-  const result = await model.embedContent(text);
-  const values = result.embedding.values;
-  return new Float32Array(values);
+  const embed = await getEmbedder();
+  const output = await embed(text, { pooling: "mean", normalize: true });
+  return new Float32Array(output.data as Float32Array);
 }
 
-/** Extract atomic facts from a conversation turn via Gemini Flash. */
+/** Skip trivial messages that aren't worth an extraction LLM call. */
+function isTrivial(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 20) return true;
+  if (/^\/\w+/.test(t)) return true;
+  if (/^(hi|hello|hey|thanks|thx|ok|okay|yes|no|sure|cool|nice)\b[\s!.?]*$/i.test(t)) return true;
+  return false;
+}
+
+interface GroqResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+}
+
 async function extractFacts(userMsg: string, agentResponse: string): Promise<string[]> {
-  const client = getClient();
-  if (!client) return [];
+  if (isTrivial(userMsg)) return [];
+  if (!config.groqApiKey) return [];
 
-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
-  const prompt = [
-    "Extract key facts from this conversation that would be useful to remember for future conversations.",
-    "Return ONLY a JSON array of short, atomic fact strings. No explanation, no markdown — just the JSON array.",
-    "If there are no memorable facts (greetings, small talk, routine acknowledgments), return an empty array [].",
-    "",
-    "User: " + userMsg,
-    "",
-    "Assistant: " + agentResponse.slice(0, 2000),
-  ].join("\n");
+  const resp = await fetch(GROQ_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.groqApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      response_format: { type: "json_object" },
+      temperature: 0.1,
+      max_tokens: 400,
+      messages: [
+        {
+          role: "system",
+          content:
+            'Extract atomic facts worth remembering from the conversation. Return JSON: {"facts": [string, ...]}. Each fact is a short standalone statement. Return {"facts": []} for greetings, acknowledgments, or routine exchanges with nothing memorable.',
+        },
+        {
+          role: "user",
+          content: `User: ${userMsg}\nAssistant: ${agentResponse.slice(0, 2000)}`,
+        },
+      ],
+    }),
+  });
 
-  const result = await model.generateContent(prompt);
-  const text = result.response.text().trim();
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`Groq ${resp.status}: ${body.slice(0, 300)}`);
+  }
 
-  // Parse JSON array from response — handle markdown code fences
-  const cleaned = text.replace(/^```json?\s*/, "").replace(/\s*```$/, "");
-  const parsed = JSON.parse(cleaned);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((item: unknown): item is string => typeof item === "string");
+  const data = (await resp.json()) as GroqResponse;
+  const text = data.choices?.[0]?.message?.content ?? "{}";
+  const parsed = JSON.parse(text);
+  const facts = parsed.facts;
+  if (!Array.isArray(facts)) return [];
+  return facts.filter((f: unknown): f is string => typeof f === "string" && f.trim().length > 0);
 }
 
 /**
@@ -56,9 +95,8 @@ async function extractFacts(userMsg: string, agentResponse: string): Promise<str
  * Call this AFTER sending the response — it never blocks the user.
  */
 export function extractAndStore(chatId: number, userMsg: string, agentResponse: string): void {
-  if (!config.geminiApiKey) return;
+  if (!config.groqApiKey) return;
 
-  // Fire and forget — don't await
   doExtraction(chatId, userMsg, agentResponse).catch((err) => {
     console.error("[memory] Extraction failed:", err instanceof Error ? err.message : err);
   });

@@ -30,10 +30,7 @@ export const config = {
   agentTimeoutMs: Number(optional("AGENT_TIMEOUT_MS", "900000")),
   agentCwd: optional("AGENT_CWD", process.env.HOME ?? "/home"),
 
-  // Gemini — embeddings + fact extraction
-  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
-
-  // Groq Whisper STT
+  // Groq — Whisper STT + Llama 4 Scout fact extraction
   groqApiKey: process.env.GROQ_API_KEY ?? "",
 
   // Security — PIN lock (optional: omit PIN_HASH to disable locking)

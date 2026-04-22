@@ -2,6 +2,7 @@
 
 import { initDb, closeDb } from "./db.ts";
 import { initMemoryDb } from "./memory.ts";
+import { warmEmbedder } from "./extraction.ts";
 import { createBot, ensureOutputDir } from "./bot.ts";
 import { cleanupOldImages } from "./image-handler.ts";
 
@@ -14,6 +15,9 @@ console.log("[claudeclaw] Database initialized");
 
 // Ensure agent-output image dir exists for [TG_IMAGE: path] responses
 ensureOutputDir();
+
+// Pre-download BGE embedding model so first user message has warm cache
+warmEmbedder();
 
 // Clean up stale photo downloads on boot
 const removed = cleanupOldImages();
