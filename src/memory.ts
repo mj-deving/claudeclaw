@@ -11,6 +11,8 @@ export interface Memory {
   similarity?: number;
 }
 
+const EMBEDDING_BYTES = 384 * 4;
+
 export function initMemoryDb(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
@@ -22,6 +24,11 @@ export function initMemoryDb(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  const result = db.run("DELETE FROM memories WHERE length(embedding) != ?", [EMBEDDING_BYTES]);
+  if (result.changes > 0) {
+    console.log(`[memory] Dropped ${result.changes} legacy embedding row(s) with mismatched dimension`);
+  }
 
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
