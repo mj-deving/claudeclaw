@@ -25,9 +25,30 @@ export function initMemoryDb(): void {
     );
   `);
 
+  // Back up condemned rows before DELETE so the dim-swap migration is reversible.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories_legacy_backup (
+      id INTEGER,
+      chat_id INTEGER,
+      content TEXT,
+      embedding BLOB,
+      embedding_bytes INTEGER,
+      source TEXT,
+      created_at TEXT,
+      backed_up_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  const backed = db.run(
+    `INSERT INTO memories_legacy_backup (id, chat_id, content, embedding, embedding_bytes, source, created_at)
+     SELECT id, chat_id, content, embedding, length(embedding), source, created_at
+     FROM memories WHERE length(embedding) != ?`,
+    [EMBEDDING_BYTES],
+  );
   const result = db.run("DELETE FROM memories WHERE length(embedding) != ?", [EMBEDDING_BYTES]);
   if (result.changes > 0) {
-    console.log(`[memory] Dropped ${result.changes} legacy embedding row(s) with mismatched dimension`);
+    console.log(
+      `[memory] Migrated ${result.changes} legacy embedding row(s) to memories_legacy_backup (${backed.changes} backed up)`,
+    );
   }
 
   db.exec(`
