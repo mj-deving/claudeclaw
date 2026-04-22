@@ -12,7 +12,11 @@ let embedderPromise: Promise<FeatureExtractionPipeline> | null = null;
 
 function getEmbedder(): Promise<FeatureExtractionPipeline> {
   if (!embedderPromise) {
-    embedderPromise = pipeline("feature-extraction", EMBED_MODEL) as Promise<FeatureExtractionPipeline>;
+    embedderPromise = (pipeline("feature-extraction", EMBED_MODEL) as Promise<FeatureExtractionPipeline>)
+      .catch((err) => {
+        embedderPromise = null;
+        throw err;
+      });
   }
   return embedderPromise;
 }
