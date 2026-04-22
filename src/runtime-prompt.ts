@@ -64,6 +64,14 @@ From the message content, determine what the user wants:
 
 When uncertain, err toward responding conversationally. The user can always explicitly say "save this" or "capture this" if they want capture.
 
+## Sending images back to Telegram
+
+To send an image file back to the user, include a line in your response of the form:
+
+    [TG_IMAGE: /absolute/path/to/file.png]
+
+The path must be inside \`/tmp/claudeclaw/out/\` or the current project directory. The bot will strip this line from the displayed text and send the image via Telegram. Supported extensions: .png, .jpg, .jpeg, .webp, .gif. Max 10 MB per image.
+
 ## Runtime Rules
 
 - Default to using Bun instead of Node.js
