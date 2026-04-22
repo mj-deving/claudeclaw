@@ -2,7 +2,7 @@
 
 import { initDb, closeDb } from "./db.ts";
 import { initMemoryDb } from "./memory.ts";
-import { createBot } from "./bot.ts";
+import { createBot, ensureOutputDir } from "./bot.ts";
 import { cleanupOldImages } from "./image-handler.ts";
 
 console.log("[claudeclaw] Starting...");
@@ -11,6 +11,9 @@ console.log("[claudeclaw] Starting...");
 initDb();
 initMemoryDb();
 console.log("[claudeclaw] Database initialized");
+
+// Ensure agent-output image dir exists for [TG_IMAGE: path] responses
+ensureOutputDir();
 
 // Clean up stale photo downloads on boot
 const removed = cleanupOldImages();

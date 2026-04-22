@@ -5,9 +5,40 @@ import { mkdirSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync
 import path from "node:path";
 import { config } from "./config.ts";
 import { handleMessageStreaming } from "./bot.ts";
+import { enqueue } from "./queue.ts";
+import { stagePhotoCombo } from "./combo-buffer.ts";
 
 const IMAGE_DIR = "/tmp/claudeclaw/images";
 const IMAGE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+interface AlbumBuffer {
+  chatId: number;
+  groupId: string;
+  photos: string[];
+  caption: string;
+  ctx: Context;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const ALBUM_BUFFERS = new Map<string, AlbumBuffer>();
+const ALBUM_FLUSH_MS = 1500;
+
+function albumKey(chatId: number, groupId: string): string {
+  return `${chatId}:${groupId}`;
+}
+
+function flushAlbum(key: string): void {
+  const entry = ALBUM_BUFFERS.get(key);
+  if (!entry) return;
+  ALBUM_BUFFERS.delete(key);
+
+  enqueue(entry.chatId, async () => {
+    const list = entry.photos.join(", ");
+    const body = entry.caption || "Analyze these images.";
+    const prompt = `[Images attached (${entry.photos.length}): ${list}]\n\n${body}`;
+    await handleMessageStreaming(entry.ctx, entry.chatId, prompt);
+  });
+}
 
 export interface ImageDownloadResult {
   success: boolean;
@@ -63,6 +94,7 @@ export async function handlePhotoMessage(ctx: Context, chatId: number): Promise<
   // Telegram sends multiple resolutions — pick the highest
   const largest = photos[photos.length - 1]!;
   const caption = ctx.message?.caption?.trim() ?? "";
+  const groupId = ctx.message?.media_group_id;
 
   await ctx.replyWithChatAction("typing").catch(() => {});
 
@@ -75,11 +107,30 @@ export async function handlePhotoMessage(ctx: Context, chatId: number): Promise<
     return;
   }
 
-  const promptText = caption
-    ? `[Image attached: ${result.filepath}]\n\n${caption}`
-    : `[Image attached: ${result.filepath}]\n\nAnalyze this image.`;
+  if (groupId) {
+    const key = albumKey(chatId, groupId);
+    const existing = ALBUM_BUFFERS.get(key);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.photos.push(result.filepath);
+      existing.ctx = ctx;
+      if (caption) existing.caption = caption;
+      existing.timer = setTimeout(() => flushAlbum(key), ALBUM_FLUSH_MS);
+    } else {
+      const buf: AlbumBuffer = {
+        chatId,
+        groupId,
+        photos: [result.filepath],
+        caption,
+        ctx,
+        timer: setTimeout(() => flushAlbum(key), ALBUM_FLUSH_MS),
+      };
+      ALBUM_BUFFERS.set(key, buf);
+    }
+    return;
+  }
 
-  await handleMessageStreaming(ctx, chatId, promptText);
+  stagePhotoCombo(chatId, result.filepath, caption, ctx);
 }
 
 /** Delete images older than TTL. Safe to call on startup or periodically. */

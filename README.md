@@ -1,5 +1,7 @@
 # ClaudeClaw
 
+![Claude_SDK](https://img.shields.io/badge/-Claude_SDK-D4A574?style=flat-square) ![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square) ![grammY](https://img.shields.io/badge/-grammY-26A5E4?style=flat-square)
+
 Mobile surface of [PAI](https://github.com/mj-deving/Pai-Exploration) (Personal AI Infrastructure). A Telegram bot backed by the Claude Agent SDK with full PAI context.
 
 ## What it does

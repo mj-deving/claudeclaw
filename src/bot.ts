@@ -1,6 +1,6 @@
 /** Grammy bot — allowlist, PIN lock, exfiltration guard, streaming responses, voice transcription. */
 
-import { Bot, type Context } from "grammy";
+import { Bot, type Context, InputFile } from "grammy";
 import { config } from "./config.ts";
 import { getSession, upsertSession, getActiveProject, setActiveProject } from "./db.ts";
 import { enqueue } from "./queue.ts";
@@ -9,7 +9,9 @@ import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./securi
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard, triageView } from "./capture-handler.ts";
 import { handleVoiceMessage } from "./voice.ts";
+import { takePhotoCombo, handleVoiceComboWithPhoto } from "./combo-buffer.ts";
 import { handlePhotoMessage } from "./image-handler.ts";
+import { handleDocumentMessage } from "./document-handler.ts";
 import { searchMemories, getRecentMemories, clearMemories } from "./memory.ts";
 import { embedText, extractAndStore } from "./extraction.ts";
 import { triggerSelfUpgrade } from "./self-upgrade.ts";
@@ -17,6 +19,9 @@ import { TELEGRAM_MAX_LENGTH, formatCostFooter, splitMessage, sendSplitMessages 
 
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { extractAndValidateImages, ensureOutputDir, stripSentinelsForDisplay, findSafeSplitBoundary } from "./image-output.ts";
+
+export { ensureOutputDir };
 
 const DEFAULT_AGENT_ID = "main";
 const STREAM_DEBOUNCE_MS = 800;
@@ -266,7 +271,13 @@ export function createBot(): Bot {
     }
     if (isPinEnabled()) touchActivity(chatId);
 
+    // Check combo inside the queue so a preceding photo-download task stages it first.
     enqueue(chatId, async () => {
+      const combo = takePhotoCombo(chatId);
+      if (combo) {
+        await handleVoiceComboWithPhoto(ctx, chatId, combo);
+        return;
+      }
       await handleVoiceMessage(ctx, chatId);
     });
   });
@@ -287,10 +298,25 @@ export function createBot(): Bot {
     });
   });
 
+  // Handle document messages — download then route to agent with file path
+  bot.on("message:document", async (ctx) => {
+    const chatId = ctx.chat.id;
+
+    if (isPinEnabled() && isLocked(chatId)) {
+      await ctx.reply("\u{1F512} Session is locked. Use /unlock <pin> to unlock.");
+      return;
+    }
+    if (isPinEnabled()) touchActivity(chatId);
+
+    enqueue(chatId, async () => {
+      await handleDocumentMessage(ctx, chatId);
+    });
+  });
+
   // Reject other message types
   bot.on("message", async (ctx) => {
-    if (!ctx.message.text && !ctx.message.voice && !ctx.message.photo) {
-      await ctx.reply("I can handle text, voice, and photo messages.");
+    if (!ctx.message.text && !ctx.message.voice && !ctx.message.photo && !ctx.message.document) {
+      await ctx.reply("I can handle text, voice, photo, and document messages.");
     }
   });
 
@@ -329,37 +355,34 @@ export async function handleMessageStreaming(
       return;
     }
 
+    // committedLength stays in raw-char space; we only transform what Telegram renders.
+    const segmentDisplay = stripSentinelsForDisplay(currentSegment);
+    if (!segmentDisplay.trim()) return;
+
     try {
       if (currentSegment.length > TELEGRAM_MAX_LENGTH && streamedMessageId) {
-        // Current message overflows — freeze it and start a new one
-        const freezeText = currentSegment.slice(0, TELEGRAM_MAX_LENGTH);
-        const edited = await ctx.api.editMessageText(chatId, streamedMessageId, freezeText).catch(() => null);
-        if (!edited) return; // Freeze failed — don't advance committedLength, retry next flush
-        committedLength += freezeText.length;
-
-        // Start new message with overflow
-        const overflow = currentSegment.slice(TELEGRAM_MAX_LENGTH);
-        if (overflow.length > 0) {
-          const display = overflow.length > TELEGRAM_MAX_LENGTH
-            ? overflow.slice(0, TELEGRAM_MAX_LENGTH)
-            : overflow;
-          const sent = await ctx.reply(display);
-          streamedMessageId = sent.message_id;
+        const rawCut = findSafeSplitBoundary(currentSegment, TELEGRAM_MAX_LENGTH);
+        const freezeRaw = currentSegment.slice(0, rawCut);
+        const freezeDisplay = stripSentinelsForDisplay(freezeRaw).slice(0, TELEGRAM_MAX_LENGTH);
+        if (!freezeDisplay) return;
+        const edited = await ctx.api.editMessageText(chatId, streamedMessageId, freezeDisplay).catch(() => null);
+        if (!edited) return;
+        committedLength += freezeRaw.length;
+        const overflowRaw = currentSegment.slice(rawCut);
+        if (overflowRaw.length > 0) {
+          const overflowDisplay = stripSentinelsForDisplay(overflowRaw).slice(0, TELEGRAM_MAX_LENGTH);
+          if (overflowDisplay) {
+            const sent = await ctx.reply(overflowDisplay);
+            streamedMessageId = sent.message_id;
+          }
         }
       } else if (streamedMessageId) {
-        // Edit existing message with current segment
-        await ctx.api.editMessageText(chatId, streamedMessageId, currentSegment).catch(() => {});
+        await ctx.api.editMessageText(chatId, streamedMessageId, segmentDisplay.slice(0, TELEGRAM_MAX_LENGTH)).catch(() => {});
       } else {
-        // Send first message
-        const display = currentSegment.length > TELEGRAM_MAX_LENGTH
-          ? currentSegment.slice(0, TELEGRAM_MAX_LENGTH)
-          : currentSegment;
-        const sent = await ctx.reply(display);
+        const sent = await ctx.reply(segmentDisplay.slice(0, TELEGRAM_MAX_LENGTH));
         streamedMessageId = sent.message_id;
       }
-    } catch {
-      // Edit can fail if message hasn't changed — ignore
-    }
+    } catch {}
     lastFlush = Date.now();
   }
 
@@ -434,14 +457,17 @@ export async function handleMessageStreaming(
       return;
     }
 
+    // Slice against fullResponse (pre-strip) so committedLength stays consistent.
+    const { paths: imagePaths } = extractAndValidateImages(fullResponse, activeCwd);
+    const finalRaw = fullResponse.slice(committedLength);
+    const { text: finalStripped } = extractAndValidateImages(finalRaw, activeCwd);
+    const finalSegment = finalStripped.trim().length > 0 ? finalStripped : finalRaw;
+
     // Send/edit final message — split across messages if needed
-    const finalSegment = fullResponse.slice(committedLength);
     if (streamedMessageId) {
       if (finalSegment.length <= TELEGRAM_MAX_LENGTH) {
-        // Fits in the current message — just edit it
         await ctx.api.editMessageText(chatId, streamedMessageId, finalSegment).catch(() => {});
       } else {
-        // Split: edit current message with first chunk, send rest as new messages
         const chunks = splitMessage(finalSegment);
         await ctx.api.editMessageText(chatId, streamedMessageId, chunks[0]!).catch(() => {});
         for (let i = 1; i < chunks.length; i++) {
@@ -449,7 +475,13 @@ export async function handleMessageStreaming(
         }
       }
     } else {
-      await sendSplitMessages(ctx, fullResponse);
+      await sendSplitMessages(ctx, finalSegment);
+    }
+
+    for (const filepath of imagePaths) {
+      await ctx.replyWithPhoto(new InputFile(filepath)).catch((e) => {
+        console.warn("[bot] photo send failed", e);
+      });
     }
 
     // Fire-and-forget memory extraction — never blocks response delivery
@@ -462,5 +494,4 @@ export async function handleMessageStreaming(
     clearInterval(typingInterval);
   }
 }
-
 
