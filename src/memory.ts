@@ -145,6 +145,12 @@ export function clearMemories(chatId: number): number {
   return result.changes;
 }
 
+/** Surgical delete by id, scoped to chatId so one chat can't nuke another's rows. */
+export function deleteMemoryById(chatId: number, id: number): boolean {
+  const result = db.run("DELETE FROM memories WHERE id = ? AND chat_id = ?", [id, chatId]);
+  return result.changes > 0;
+}
+
 /** Get all embeddings for a chat (used for dedup). */
 function getAllEmbeddings(chatId: number): Array<{ id: number; embedding: Float32Array }> {
   const rows = db

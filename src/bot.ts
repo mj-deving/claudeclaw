@@ -12,7 +12,7 @@ import { handleVoiceMessage } from "./voice.ts";
 import { takePhotoCombo, handleVoiceComboWithPhoto } from "./combo-buffer.ts";
 import { handlePhotoMessage } from "./image-handler.ts";
 import { handleDocumentMessage } from "./document-handler.ts";
-import { searchMemories, getRecentMemories, clearMemories } from "./memory.ts";
+import { searchMemories, getRecentMemories, clearMemories, deleteMemoryById } from "./memory.ts";
 import { embedText, extractAndStore } from "./extraction.ts";
 import { triggerSelfUpgrade } from "./self-upgrade.ts";
 import { TELEGRAM_MAX_LENGTH, formatCostFooter, splitMessage, sendSplitMessages } from "./telegram-utils.ts";
@@ -20,6 +20,7 @@ import { TELEGRAM_MAX_LENGTH, formatCostFooter, splitMessage, sendSplitMessages 
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { extractAndValidateImages, ensureOutputDir, stripSentinelsForDisplay, findSafeSplitBoundary } from "./image-output.ts";
+import { registerBotMenu, HELP_TEXT } from "./help.ts";
 
 export { ensureOutputDir };
 
@@ -238,21 +239,23 @@ export function createBot(): Bot {
     }
 
     // Memory commands
-    if (text === "/memory") {
+    if (text === "/memory" || text.startsWith("/memory ")) {
       const memories = getRecentMemories(chatId);
-      if (memories.length === 0) {
-        await ctx.reply("No memories stored yet.");
-      } else {
-        const list = memories.map((m) => `• ${m.content}`).join("\n");
-        await ctx.reply(`Memories (${memories.length}):\n${list}`);
+      const m = text.slice("/memory".length).trim().match(/^delete\s+(\d+)$/i);
+      if (m) {
+        const target = memories[Number(m[1]) - 1];
+        if (!target) { await ctx.reply(`No memory at index ${m[1]}. Use /memory to list.`); return; }
+        const ok = deleteMemoryById(chatId, target.id);
+        await ctx.reply(ok ? `✓ Deleted: ${target.content}` : `✗ Delete failed.`);
+        return;
       }
+      if (memories.length === 0) { await ctx.reply("No memories stored yet."); return; }
+      const list = memories.map((m, i) => `${i + 1}. ${m.content}`).join("\n");
+      await ctx.reply(`Memories (${memories.length}):\n${list}\n\nUse /memory delete <n> to remove one.`);
       return;
     }
-    if (text === "/forget") {
-      const count = clearMemories(chatId);
-      await ctx.reply(`Cleared ${count} memories.`);
-      return;
-    }
+    if (text === "/forget") { await ctx.reply(`Cleared ${clearMemories(chatId)} memories.`); return; }
+    if (text === "/help") { await ctx.reply(HELP_TEXT); return; }
 
     // Agent path — PAI-aware, streaming
     enqueue(chatId, async () => {
@@ -319,7 +322,7 @@ export function createBot(): Bot {
       await ctx.reply("I can handle text, voice, photo, and document messages.");
     }
   });
-
+  registerBotMenu(bot);
   return bot;
 }
 
