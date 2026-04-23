@@ -33,6 +33,10 @@ export const config = {
   // Groq — Whisper STT + Llama 4 Scout fact extraction
   groqApiKey: process.env.GROQ_API_KEY ?? "",
 
+  // Memory kill-switch — set MEMORY_ENABLED=false to disable recall + extraction + embedder warmup.
+  // Stored memories are not deleted; they're just inert while disabled.
+  memoryEnabled: (process.env.MEMORY_ENABLED ?? "true").toLowerCase() !== "false",
+
   // Security — PIN lock (optional: omit PIN_HASH to disable locking)
   pinHash: process.env.PIN_HASH ?? "",
   pinSalt: (() => {
