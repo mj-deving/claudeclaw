@@ -5,6 +5,7 @@ import { initMemoryDb } from "./memory.ts";
 import { warmEmbedder } from "./extraction.ts";
 import { createBot, ensureOutputDir } from "./bot.ts";
 import { cleanupOldImages } from "./image-handler.ts";
+import { config } from "./config.ts";
 
 console.log("[claudeclaw] Starting...");
 
@@ -17,7 +18,11 @@ console.log("[claudeclaw] Database initialized");
 ensureOutputDir();
 
 // Pre-download BGE embedding model so first user message has warm cache
-warmEmbedder();
+if (config.memoryEnabled) {
+  warmEmbedder();
+} else {
+  console.log("[claudeclaw] Memory DISABLED (MEMORY_ENABLED=false) — skipping embedder warmup");
+}
 
 // Clean up stale photo downloads on boot
 const removed = cleanupOldImages();
