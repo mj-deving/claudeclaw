@@ -70,12 +70,36 @@ export function getActiveProject(chatId: number): string | undefined {
   return row?.active_project ?? undefined;
 }
 
+// In-memory clear epoch — bumped by /clear so an in-flight agent call's
+// post-completion upsert can detect "the user cleared while I was running"
+// and skip persisting its new session_id.
+const clearEpochs = new Map<string, number>();
+const epochKey = (chatId: number, agentId: string) => `${chatId}:${agentId}`;
+
+export function getClearEpoch(chatId: number, agentId: string): number {
+  return clearEpochs.get(epochKey(chatId, agentId)) ?? 0;
+}
+
 export function clearSession(chatId: number, agentId: string): boolean {
+  const k = epochKey(chatId, agentId);
+  clearEpochs.set(k, (clearEpochs.get(k) ?? 0) + 1);
   const result = db.run(
     "UPDATE sessions SET session_id = '', updated_at = datetime('now') WHERE chat_id = ? AND agent_id = ?",
     [chatId, agentId],
   );
   return result.changes > 0;
+}
+
+/** Upsert only if no /clear ran since the caller captured the epoch. */
+export function upsertSessionIfEpochMatches(
+  chatId: number,
+  agentId: string,
+  sessionId: string,
+  expectedEpoch: number,
+): boolean {
+  if (getClearEpoch(chatId, agentId) !== expectedEpoch) return false;
+  upsertSession(chatId, agentId, sessionId);
+  return true;
 }
 
 export function setActiveProject(chatId: number, projectPath: string): void {
