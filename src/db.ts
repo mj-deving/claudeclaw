@@ -70,6 +70,14 @@ export function getActiveProject(chatId: number): string | undefined {
   return row?.active_project ?? undefined;
 }
 
+export function clearSession(chatId: number, agentId: string): boolean {
+  const result = db.run(
+    "UPDATE sessions SET session_id = '', updated_at = datetime('now') WHERE chat_id = ? AND agent_id = ?",
+    [chatId, agentId],
+  );
+  return result.changes > 0;
+}
+
 export function setActiveProject(chatId: number, projectPath: string): void {
   // Upsert: if a session row exists for this chat, update it; otherwise insert a placeholder
   const existing = db

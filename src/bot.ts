@@ -2,7 +2,7 @@
 
 import { Bot, type Context, InputFile } from "grammy";
 import { config } from "./config.ts";
-import { getSession, upsertSession, getActiveProject, setActiveProject } from "./db.ts";
+import { getSession, upsertSession, getActiveProject, setActiveProject, clearSession } from "./db.ts";
 import { enqueue } from "./queue.ts";
 import { runAgentWithRetry } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
@@ -12,7 +12,7 @@ import { handleVoiceMessage } from "./voice.ts";
 import { takePhotoCombo, handleVoiceComboWithPhoto } from "./combo-buffer.ts";
 import { handlePhotoMessage } from "./image-handler.ts";
 import { handleDocumentMessage } from "./document-handler.ts";
-import { searchMemories, getRecentMemories, clearMemories, deleteMemoryById } from "./memory.ts";
+import { searchMemories, getRecentMemories, clearMemories, deleteMemoryById, countMemories } from "./memory.ts";
 import { embedText, extractAndStore } from "./extraction.ts";
 import { triggerSelfUpgrade } from "./self-upgrade.ts";
 import { TELEGRAM_MAX_LENGTH, formatCostFooter, splitMessage, sendSplitMessages } from "./telegram-utils.ts";
@@ -20,7 +20,7 @@ import { TELEGRAM_MAX_LENGTH, formatCostFooter, splitMessage, sendSplitMessages 
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { extractAndValidateImages, ensureOutputDir, stripSentinelsForDisplay, findSafeSplitBoundary } from "./image-output.ts";
-import { registerBotMenu, HELP_TEXT } from "./help.ts";
+import { registerBotMenu, HELP_TEXT, COMMANDS_TEXT } from "./help.ts";
 
 export { ensureOutputDir };
 
@@ -256,6 +256,27 @@ export function createBot(): Bot {
     }
     if (text === "/forget") { await ctx.reply(`Cleared ${clearMemories(chatId)} memories.`); return; }
     if (text === "/help") { await ctx.reply(HELP_TEXT); return; }
+    if (text === "/commands") { await ctx.reply(COMMANDS_TEXT); return; }
+
+    // Session control — Claude-CLI-style equivalents on the bot side
+    if (text === "/clear") {
+      const cleared = clearSession(chatId, DEFAULT_AGENT_ID);
+      await ctx.reply(cleared ? "✓ Session cleared. Next turn starts fresh." : "No active session to clear.");
+      return;
+    }
+    if (text === "/context") {
+      const sid = getSession(chatId, DEFAULT_AGENT_ID);
+      const cwd = getActiveProject(chatId) ?? config.agentCwd;
+      const mems = countMemories(chatId);
+      const sidTail = sid ? sid.slice(-8) : "(none)";
+      await ctx.reply(
+        `📍 cwd: ${cwd}\n` +
+        `🧵 session: ${sidTail}\n` +
+        `🧠 memories: ${mems}\n` +
+        `🤖 model: ${config.agentModel}`,
+      );
+      return;
+    }
 
     // Agent path — PAI-aware, streaming
     enqueue(chatId, async () => {
