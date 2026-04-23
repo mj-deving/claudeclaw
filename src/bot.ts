@@ -2,7 +2,7 @@
 
 import { Bot, type Context, InputFile } from "grammy";
 import { config } from "./config.ts";
-import { getSession, upsertSession, getActiveProject, setActiveProject, clearSession } from "./db.ts";
+import { getSession, upsertSessionIfEpochMatches, getActiveProject, setActiveProject, clearSession, getClearEpoch } from "./db.ts";
 import { enqueue } from "./queue.ts";
 import { runAgentWithRetry } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
@@ -448,6 +448,8 @@ export async function handleMessageStreaming(
 
     const agentMessage = memoryContext + text;
 
+    const epochAtStart = getClearEpoch(chatId, DEFAULT_AGENT_ID);
+
     const result = await runAgentWithRetry({
       message: agentMessage,
       sessionId: existingSessionId,
@@ -466,7 +468,15 @@ export async function handleMessageStreaming(
     if (flushTimer) clearTimeout(flushTimer);
 
     if (result.sessionId) {
-      upsertSession(chatId, DEFAULT_AGENT_ID, result.sessionId);
+      const persisted = upsertSessionIfEpochMatches(
+        chatId,
+        DEFAULT_AGENT_ID,
+        result.sessionId,
+        epochAtStart,
+      );
+      if (!persisted) {
+        console.log(`[bot] /clear won race for chat ${chatId}; skipping session upsert`);
+      }
     }
 
     const responseText = buffer || result.text || "(No response)";
