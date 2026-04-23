@@ -438,7 +438,7 @@ export async function handleMessageStreaming(
 
     // Memory search — embed query, find relevant context
     let memoryContext = "";
-    const queryEmbedding = await embedText(text).catch(() => null);
+    const queryEmbedding = config.memoryEnabled ? await embedText(text).catch(() => null) : null;
     if (queryEmbedding) {
       const relevant = searchMemories(chatId, queryEmbedding);
       if (relevant.length > 0) {
@@ -519,7 +519,7 @@ export async function handleMessageStreaming(
     }
 
     // Fire-and-forget memory extraction — never blocks response delivery
-    extractAndStore(chatId, text, responseText);
+    if (config.memoryEnabled) extractAndStore(chatId, text, responseText);
   } catch (err) {
     console.error(`[bot] Failed to process message for chat ${chatId}:`, err);
     if (flushTimer) clearTimeout(flushTimer);
