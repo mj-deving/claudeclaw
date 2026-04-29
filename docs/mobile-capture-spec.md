@@ -3,13 +3,13 @@
 **Date:** 2026-04-20
 **Status:** Draft
 **Author:** mj-deving
-**Related beads:** `96d` (ClaudeClaw Memory v2), `odi` (Daemon Phase 1: TELOS Router), `2kx` (PAI Daemon epic)
+**Related beads:** `96d` (ClaudeClaw Memory v2), `odi` (Daemon Phase 1: TELOS Router), `2kx` (DAI Daemon epic)
 
 ---
 
 ## 1. Problem
 
-ClaudeClaw is a Telegram bot that runs a full Claude Agent SDK session ($0.05–0.50, 5–60s latency) for every message. The user wants to use it as a mobile information dump — paste URLs, thoughts, article snippets from their phone and have them land in PAI's mx inbox. Running a full agent session for a file append is like taking a taxi to your own mailbox.
+ClaudeClaw is a Telegram bot that runs a full Claude Agent SDK session ($0.05–0.50, 5–60s latency) for every message. The user wants to use it as a mobile information dump — paste URLs, thoughts, article snippets from their phone and have them land in DAI's mx inbox. Running a full agent session for a file append is like taking a taxi to your own mailbox.
 
 ## 2. Insight
 
@@ -204,7 +204,7 @@ add - Capture an idea, URL, or memo
 url - Capture a URL
 memo - Capture a longer note
 remind - Set a reminder (default +7 days)
-status - Show PAI status (via agent)
+status - Show DAI status (via agent)
 ideas - Show inbox (via agent)
 lock - Lock session
 unlock - Unlock session
