@@ -43,7 +43,7 @@ Full architecture is in `README.md`. Essentials:
 - `voice.ts` — Groq Whisper STT
 - `db.ts`, `queue.ts`, `config.ts`
 
-**Runtime prompt split:** The bot's Telegram-facing identity, PAI pipeline awareness (TELOS, mx, capture), intent routing, and security deflection rules live in `src/runtime-prompt.ts` and are appended to the Agent SDK's `systemPrompt`. This ensures those rules apply in every cwd the bot roams into via `/project`. Do NOT put runtime-only bot behavior in CLAUDE.md — it would be dropped when the agent switches projects.
+**Runtime prompt split:** The bot's Telegram-facing identity, DAI pipeline awareness (TELOS, mx, capture), intent routing, and security deflection rules live in `src/runtime-prompt.ts` and are appended to the Agent SDK's `systemPrompt`. This ensures those rules apply in every cwd the bot roams into via `/project`. Do NOT put runtime-only bot behavior in CLAUDE.md — it would be dropped when the agent switches projects.
 
 **Local state:** `.claudeclaw/sessions.db` (SQLite WAL — sessions + memories tables).
 

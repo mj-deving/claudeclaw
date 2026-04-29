@@ -2,11 +2,11 @@
 
 ![Claude_SDK](https://img.shields.io/badge/-Claude_SDK-D4A574?style=flat-square) ![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square) ![grammY](https://img.shields.io/badge/-grammY-26A5E4?style=flat-square)
 
-Mobile surface of [PAI](https://github.com/mj-deving/Pai-Exploration) (Personal AI Infrastructure). A Telegram bot backed by the Claude Agent SDK with full PAI context.
+Mobile surface of [DAI](https://github.com/mj-deving/Pai-Exploration) (Digital Assistant Infrastructure). A Telegram bot backed by the Claude Agent SDK with full DAI context.
 
 ## What it does
 
-- **Text + voice** messages via Telegram, routed to a PAI-aware Claude agent
+- **Text + voice** messages via Telegram, routed to a DAI-aware Claude agent
 - **Fast-path capture** — bare URLs, `/add`, `/url`, `/memo`, `/remind` write directly to INBOX.md (no AI cost)
 - **Streaming responses** — progressive edits to a single Telegram message as the agent works
 - **Voice transcription** — Groq Whisper STT, then routed through the agent
@@ -18,7 +18,7 @@ Mobile surface of [PAI](https://github.com/mj-deving/Pai-Exploration) (Personal 
 ```
 Telegram -> Grammy bot -> allowlist + PIN check
                        -> fast-path capture (INBOX.md)
-                       -> Claude Agent SDK (streaming, PAI context)
+                       -> Claude Agent SDK (streaming, DAI context)
                        -> exfiltration guard -> Telegram response
 ```
 
