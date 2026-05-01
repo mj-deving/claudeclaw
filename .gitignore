@@ -44,3 +44,6 @@ bun.lock
 # Beads / Dolt files (added by bd init)
 .dolt/
 .beads-credential-key
+
+# Downloads — reference materials, not versioned
+downloads/
