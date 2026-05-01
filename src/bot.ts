@@ -3,8 +3,8 @@
 import { Bot, type Context, InputFile } from "grammy";
 import { config } from "./config.ts";
 import { getSession, upsertSessionIfEpochMatches, getActiveProject, setActiveProject, clearSession, getClearEpoch } from "./db.ts";
-import { enqueue } from "./queue.ts";
-import { runAgentWithRetry } from "./agent.ts";
+import { enqueue, drainQueue } from "./queue.ts";
+import { runAgentWithRetry, abortChat, AbortedError } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard, triageView } from "./capture-handler.ts";
@@ -120,6 +120,23 @@ export function createBot(): Bot {
     const chatId = ctx.chat?.id;
     if (chatId === undefined || !config.allowedChatIds.has(chatId)) {
       console.warn(`[bot] Rejected message from chat: ${chatId}`);
+      return;
+    }
+    await next();
+  });
+
+  // HARD STOP — runs BEFORE PIN lock and BEFORE the per-chat queue so a
+  // wedged loop or busy worker can never block it. Mobile-friendly aliases.
+  bot.on("message:text", async (ctx, next) => {
+    const text = ctx.message.text.trim().toLowerCase();
+    if (text === "/stop" || text === "/abort" || text === "/cancel" || text === "/kill") {
+      const chatId = ctx.chat.id;
+      const drained = drainQueue(chatId);
+      const aborted = abortChat(chatId);
+      const msg = (aborted || drained > 0)
+        ? `⏹ Stopped. (in-flight aborted: ${aborted ? "yes" : "no"}, queued cleared: ${drained})`
+        : "Nothing in flight.";
+      await ctx.reply(msg).catch(() => {});
       return;
     }
     await next();
@@ -455,6 +472,7 @@ export async function handleMessageStreaming(
       sessionId: existingSessionId,
       agentId: DEFAULT_AGENT_ID,
       cwd: activeCwd,
+      chatId,
       onText: (chunk) => {
         buffer += chunk;
         // Only start streaming after minimum chars accumulated
@@ -521,9 +539,14 @@ export async function handleMessageStreaming(
     // Fire-and-forget memory extraction — never blocks response delivery
     if (config.memoryEnabled) extractAndStore(chatId, text, responseText);
   } catch (err) {
-    console.error(`[bot] Failed to process message for chat ${chatId}:`, err);
     if (flushTimer) clearTimeout(flushTimer);
-    await ctx.reply("Failed to get a response. Please try again.").catch(() => {});
+    if (err instanceof AbortedError) {
+      // User already saw "⏹ Stopped." — do not also send a "Failed" reply.
+      console.log(`[bot] Aborted run for chat ${chatId}`);
+    } else {
+      console.error(`[bot] Failed to process message for chat ${chatId}:`, err);
+      await ctx.reply("Failed to get a response. Please try again.").catch(() => {});
+    }
   } finally {
     clearInterval(typingInterval);
   }

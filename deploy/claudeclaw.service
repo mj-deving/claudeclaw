@@ -18,6 +18,15 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
+# Shutdown — bound the SIGTERM wait so a stuck SDK Stop hook (codex plugin's
+# stop-review-gate-hook has a 900s timeout) cannot pin systemd for 90s.
+# KillMode=mixed: SIGTERM to MainPID; if cleanup hangs past TimeoutStopSec
+# systemd sends SIGKILL to all remaining cgroup processes (works around the
+# WSL2 cgroup-kill bug we hit on 2026-05-01).
+TimeoutStopSec=15
+KillMode=mixed
+KillSignal=SIGTERM
+
 # Security — allowlist is the boundary, not filesystem sandbox
 NoNewPrivileges=true
 PrivateNetwork=false
