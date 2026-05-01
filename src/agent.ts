@@ -40,6 +40,18 @@ export function abortAll(): number {
   return n;
 }
 
+/**
+ * Sentinel thrown when runAgent is cancelled via AbortController (user /stop,
+ * SIGTERM, or timeout). Distinct from generic SDK errors so the retry loop
+ * can bail out instead of restarting the work the user just stopped.
+ */
+export class AbortedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "AbortedError";
+  }
+}
+
 export interface AgentResult {
   text: string | null;
   sessionId: string | undefined;
@@ -106,6 +118,11 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
         }
       }
     }
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new AbortedError(`runAgent aborted (chat ${opts.chatId ?? "n/a"})`);
+    }
+    throw err;
   } finally {
     clearTimeout(timeout);
     if (opts.chatId !== undefined) inflight.delete(opts.chatId);
@@ -124,6 +141,10 @@ export async function runAgentWithRetry(
     try {
       return await runAgent(opts);
     } catch (err) {
+      // Aborted runs (user /stop, SIGTERM, timeout) must NEVER retry —
+      // otherwise the bot silently restarts work the user just stopped.
+      if (err instanceof AbortedError) throw err;
+
       lastError = err;
       const msg = err instanceof Error ? err.message : String(err);
       console.error(
