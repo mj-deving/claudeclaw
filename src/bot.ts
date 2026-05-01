@@ -4,7 +4,7 @@ import { Bot, type Context, InputFile } from "grammy";
 import { config } from "./config.ts";
 import { getSession, upsertSessionIfEpochMatches, getActiveProject, setActiveProject, clearSession, getClearEpoch } from "./db.ts";
 import { enqueue, drainQueue } from "./queue.ts";
-import { runAgentWithRetry, abortChat } from "./agent.ts";
+import { runAgentWithRetry, abortChat, AbortedError } from "./agent.ts";
 import { isLocked, tryUnlock, lock, touchActivity, isPinEnabled } from "./security.ts";
 import { scanForSecrets, formatRedactionWarning } from "./exfiltration-guard.ts";
 import { capture, type CaptureType, getReviewSummary, triageApprove, triageDiscard, triageView } from "./capture-handler.ts";
@@ -539,9 +539,14 @@ export async function handleMessageStreaming(
     // Fire-and-forget memory extraction — never blocks response delivery
     if (config.memoryEnabled) extractAndStore(chatId, text, responseText);
   } catch (err) {
-    console.error(`[bot] Failed to process message for chat ${chatId}:`, err);
     if (flushTimer) clearTimeout(flushTimer);
-    await ctx.reply("Failed to get a response. Please try again.").catch(() => {});
+    if (err instanceof AbortedError) {
+      // User already saw "⏹ Stopped." — do not also send a "Failed" reply.
+      console.log(`[bot] Aborted run for chat ${chatId}`);
+    } else {
+      console.error(`[bot] Failed to process message for chat ${chatId}:`, err);
+      await ctx.reply("Failed to get a response. Please try again.").catch(() => {});
+    }
   } finally {
     clearInterval(typingInterval);
   }
