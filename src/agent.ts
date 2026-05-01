@@ -22,11 +22,21 @@ export interface AgentOptions {
  */
 const inflight = new Map<number, AbortController>();
 
+/**
+ * Abort reasons. Stored in AbortSignal.reason so runAgent's catch can tell
+ * a user /stop apart from a config.agentTimeoutMs expiry — timeouts must
+ * still flow through the retry path and surface to the user as a failure;
+ * user-initiated and shutdown aborts must be silent and non-retried.
+ */
+const ABORT_USER = "user";
+const ABORT_SHUTDOWN = "shutdown";
+const ABORT_TIMEOUT = "timeout";
+
 /** Abort the in-flight runAgent for a chat. Returns true if one was aborted. */
 export function abortChat(chatId: number): boolean {
   const c = inflight.get(chatId);
   if (!c) return false;
-  c.abort();
+  c.abort(ABORT_USER);
   return true;
 }
 
@@ -34,7 +44,7 @@ export function abortChat(chatId: number): boolean {
 export function abortAll(): number {
   let n = 0;
   for (const c of inflight.values()) {
-    c.abort();
+    c.abort(ABORT_SHUTDOWN);
     n++;
   }
   return n;
@@ -68,7 +78,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
   let costUsd = 0;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.agentTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(ABORT_TIMEOUT), config.agentTimeoutMs);
   if (opts.chatId !== undefined) inflight.set(opts.chatId, controller);
 
   try {
@@ -119,8 +129,13 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
       }
     }
   } catch (err) {
-    if (controller.signal.aborted) {
-      throw new AbortedError(`runAgent aborted (chat ${opts.chatId ?? "n/a"})`);
+    // Only user /stop and SIGTERM shutdown become AbortedError (silent +
+    // no retry). Timeout aborts fall through as the original error so the
+    // retry loop can take another shot and, if all attempts fail, the user
+    // sees "Failed to get a response."
+    const reason = controller.signal.reason;
+    if (reason === ABORT_USER || reason === ABORT_SHUTDOWN) {
+      throw new AbortedError(`runAgent aborted: ${reason} (chat ${opts.chatId ?? "n/a"})`);
     }
     throw err;
   } finally {
