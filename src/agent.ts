@@ -11,6 +11,33 @@ export interface AgentOptions {
   cwd?: string;
   maxTurns?: number;
   onText?: (chunk: string) => void;
+  /** Per-chat key — when set, the AbortController is registered so /stop can abort it. */
+  chatId?: number;
+}
+
+/**
+ * In-flight AbortController registry — one entry per chat with active runAgent.
+ * Used by /stop on Telegram and by SIGTERM in index.ts to cancel before exit.
+ * Only one entry per chatId at a time because queue.ts serializes per-chat tasks.
+ */
+const inflight = new Map<number, AbortController>();
+
+/** Abort the in-flight runAgent for a chat. Returns true if one was aborted. */
+export function abortChat(chatId: number): boolean {
+  const c = inflight.get(chatId);
+  if (!c) return false;
+  c.abort();
+  return true;
+}
+
+/** Abort every in-flight runAgent. Returns count aborted. */
+export function abortAll(): number {
+  let n = 0;
+  for (const c of inflight.values()) {
+    c.abort();
+    n++;
+  }
+  return n;
 }
 
 export interface AgentResult {
@@ -30,6 +57,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.agentTimeoutMs);
+  if (opts.chatId !== undefined) inflight.set(opts.chatId, controller);
 
   try {
     for await (const message of query({
@@ -80,6 +108,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
     }
   } finally {
     clearTimeout(timeout);
+    if (opts.chatId !== undefined) inflight.delete(opts.chatId);
   }
 
   return { text: resultText, sessionId, inputTokens, outputTokens, costUsd };

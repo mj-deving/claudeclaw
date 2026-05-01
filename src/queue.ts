@@ -6,6 +6,21 @@ const queues = new Map<number, Task[]>();
 const processing = new Set<number>();
 
 /**
+ * Drop all PENDING tasks for a chat (does not cancel the currently running one).
+ * Used by /stop on Telegram so a wedged session doesn't fire queued messages
+ * after the abort.
+ *
+ * Returns the count of tasks dropped.
+ */
+export function drainQueue(chatId: number): number {
+  const queue = queues.get(chatId);
+  if (!queue) return 0;
+  const n = queue.length;
+  queue.length = 0;
+  return n;
+}
+
+/**
  * Enqueue a task for a specific chat. Tasks for the same chat_id
  * execute sequentially (FIFO). Different chat_ids run in parallel.
  */

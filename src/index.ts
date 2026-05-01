@@ -5,6 +5,7 @@ import { initMemoryDb } from "./memory.ts";
 import { warmEmbedder } from "./extraction.ts";
 import { createBot, ensureOutputDir } from "./bot.ts";
 import { cleanupOldImages } from "./image-handler.ts";
+import { abortAll } from "./agent.ts";
 import { config } from "./config.ts";
 
 console.log("[claudeclaw] Starting...");
@@ -37,9 +38,21 @@ const imageCleanupTimer = setInterval(() => {
 // Create and start bot
 const bot = createBot();
 
-// Graceful shutdown
+// Graceful shutdown — abort in-flight SDK runs first so spawned subprocesses
+// (codex, etc.) get the cancel signal instead of orphaning the cgroup.
 function shutdown(signal: string): void {
   console.log(`[claudeclaw] Received ${signal}, shutting down...`);
+
+  const aborted = abortAll();
+  if (aborted > 0) console.log(`[claudeclaw] Aborted ${aborted} in-flight run(s)`);
+
+  // Hard fallback — if cleanup wedges (stuck SDK Stop hooks, etc.) force exit
+  // after 10s rather than let systemd wait the full TimeoutStopSec.
+  setTimeout(() => {
+    console.warn("[claudeclaw] Shutdown timeout (10s) — forcing exit(1)");
+    process.exit(1);
+  }, 10_000).unref();
+
   clearInterval(imageCleanupTimer);
   bot.stop();
   closeDb();
