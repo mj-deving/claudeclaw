@@ -87,7 +87,7 @@ import { appendFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 
 const IDEAS_FILE = join(
-  process.env.HOME ?? "/home/mj",
+  process.env.HOME ?? homedir(),
   ".claude/PAI/USER/TELOS/IDEAS.md"
 );
 
