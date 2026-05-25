@@ -1,9 +1,10 @@
 /** Fast-path capture + triage bridge — write to INBOX.md, read from REVIEW.md. */
 
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { homedir } from "os";
 import { dirname, join } from "path";
 
-const HOME = process.env.HOME ?? "/home/USER";
+const HOME = process.env.HOME ?? homedir();
 const INBOX_FILE = join(HOME, ".claude/PAI/USER/TELOS/INBOX.md");
 const REVIEW_FILE = join(HOME, ".claude/PAI/USER/TELOS/REVIEW.md");
 
