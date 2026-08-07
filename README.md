@@ -89,3 +89,7 @@ git commit -m "feat: description"
 git push -u origin HEAD
 gh pr create --fill
 ```
+
+## License
+
+MIT
