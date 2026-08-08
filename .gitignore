@@ -44,3 +44,20 @@ bun.lock
 # Beads / Dolt files (added by bd init)
 .dolt/
 .beads-credential-key
+
+# Interne Arbeitsartefakte, gehoeren nicht in ein oeffentliches Repo
+ISA.md
+AGENTS.md
+CLAUDE.md
+.beads/
+*.darc
+__dolt_remote_info__
+MEMORY/
+Plans/
+.autoreview/
+.claude/
+.mcp.json
+.desloppify/
+*.db
+*.db-wal
+*.db-shm
