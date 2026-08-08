@@ -21,6 +21,7 @@ const BOT_COMMANDS: Array<{ command: string; description: string }> = [
   { command: "unlock", description: "Unlock with PIN" },
   { command: "clear", description: "Drop SDK session — fresh next turn" },
   { command: "context", description: "Show cwd, session, memories, model" },
+  { command: "stop", description: "Abort in-flight work (also: /abort /cancel /kill)" },
   { command: "commands", description: "List bot-side commands by category" },
   { command: "help", description: "Show all commands and skills" },
 ];
@@ -62,6 +63,7 @@ const BOT_HELP = [
   "/forget — wipe all memory (nuclear)",
   "/clear — drop SDK session (fresh start, keeps memory)",
   "/context — show cwd, session, memories, model",
+  "/stop /abort /cancel /kill — hard-stop in-flight work",
   "/commands — list bot-side commands by category",
   "/lock /unlock <pin> — session lock",
   "/update — self-upgrade bot",
@@ -96,6 +98,7 @@ export const COMMANDS_TEXT = [
   "🧵 SESSION (Claude-CLI-style)",
   "/clear — drop SDK session, fresh next turn",
   "/context — cwd, session, memories, model",
+  "/stop /abort /cancel /kill — hard-stop in-flight work",
   "",
   "🔒 SECURITY",
   "/lock — lock session",
