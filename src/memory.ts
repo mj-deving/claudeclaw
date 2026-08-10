@@ -128,6 +128,14 @@ export function searchMemories(
   return scored.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0)).slice(0, limit);
 }
 
+/** Count of stored memories for a chat (/context command). */
+export function countMemories(chatId: number): number {
+  const row = db
+    .query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM memories WHERE chat_id = ?")
+    .get(chatId);
+  return row?.n ?? 0;
+}
+
 /** Get recent memories for display (/memory command). */
 export function getRecentMemories(chatId: number, limit: number = 20): Memory[] {
   return db
